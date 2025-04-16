@@ -1,6 +1,6 @@
 {
   "name": "spectra",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI-powered automation regression testing agent for APIs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,8 +16,13 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "generate": "ts-node src/index.ts generate",
     "generate:ai": "ts-node src/index.ts generate --ai",
+    "generate:postman": "ts-node src/index.ts generate --postman",
+    "generate:ai:postman": "ts-node src/index.ts generate --ai --postman",
     "run": "ts-node src/index.ts run",
-    "run:ai": "ts-node src/index.ts run --ai"
+    "run:ai": "ts-node src/index.ts run --ai",
+    "run:postman": "ts-node src/index.ts run --postman",
+    "run:ai:postman": "ts-node src/index.ts run --ai --postman",
+    "example:file-upload": "ts-node examples/file-upload-test.ts"
   },
   "keywords": [
     "api",
@@ -25,7 +30,9 @@
     "automation",
     "gherkin",
     "regression",
-    "ai"
+    "ai",
+    "postman",
+    "newman"
   ],
   "author": "",
   "license": "ISC",
@@ -37,6 +44,7 @@
     "axios": "^1.8.4",
     "cucumber": "^6.0.7",
     "dotenv": "^16.5.0",
+    "form-data": "^4.0.0",
     "gherkin-parse": "^1.0.12",
     "jest": "^29.7.0",
     "newman": "^6.2.1",

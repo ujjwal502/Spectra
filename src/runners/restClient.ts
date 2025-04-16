@@ -1,6 +1,8 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import { TestCase, TestResult, AssertionResult } from '../types';
 import { ResponseValidator } from '../validators/responseValidator';
+import * as fs from 'fs';
+import FormData from 'form-data';
 
 export class RestClient {
   private axios: AxiosInstance;
@@ -30,17 +32,46 @@ export class RestClient {
     const assertions: AssertionResult[] = [];
 
     try {
-      // Extract endpoint and parameters
-      const { endpoint, method, request } = testCase;
+      const { endpoint, method, request, files } = testCase;
 
-      // Build request config
       const config: AxiosRequestConfig = {
         method,
         url: endpoint,
       };
 
-      // Add request data if available
-      if (request) {
+      if (files && files.length > 0) {
+        const formData = new FormData();
+
+        for (const file of files) {
+          if (!fs.existsSync(file.filePath)) {
+            throw new Error(`File not found: ${file.filePath}`);
+          }
+
+          const fileStream = fs.createReadStream(file.filePath);
+          formData.append(file.fieldName, fileStream, {
+            filename: file.fileName || file.filePath.split('/').pop(),
+            contentType: file.contentType,
+          });
+        }
+
+        if (request) {
+          Object.entries(request).forEach(([key, value]) => {
+            if (!files.some((file) => file.fieldName === key)) {
+              formData.append(
+                key,
+                typeof value === 'object' ? JSON.stringify(value) : String(value),
+              );
+            }
+          });
+        }
+
+        config.data = formData;
+
+        config.headers = {
+          ...config.headers,
+          ...formData.getHeaders(),
+        };
+      } else if (request) {
         if (method.toLowerCase() === 'get') {
           config.params = request;
         } else {
@@ -48,20 +79,16 @@ export class RestClient {
         }
       }
 
-      // Execute request
       response = await this.axios.request(config);
 
-      // Calculate duration
       const duration = Date.now() - startTime;
 
-      // Validate status code
       const statusAssertion = this.validator.validateStatusCode(
         response.status,
         testCase.expectedResponse?.status || 200,
       );
       assertions.push(statusAssertion);
 
-      // Validate schema if expected response schema exists
       if (testCase.expectedResponse?.schema) {
         const schemaAssertion = this.validator.validateAgainstSchema(
           response.data,
@@ -70,14 +97,12 @@ export class RestClient {
         assertions.push(schemaAssertion);
       }
 
-      // Validate response time (assumes 2000ms max by default)
       const timeAssertion = this.validator.validateResponseTime(
         duration,
         testCase.expectedResponse?.maxResponseTime || 2000,
       );
       assertions.push(timeAssertion);
 
-      // Determine overall success
       const success = assertions.every((assertion) => assertion.success);
 
       return {
@@ -90,7 +115,6 @@ export class RestClient {
     } catch (error: any) {
       const duration = Date.now() - startTime;
 
-      // Handle the error and create a test result
       return {
         testCase,
         success: false,

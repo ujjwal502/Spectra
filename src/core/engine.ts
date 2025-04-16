@@ -4,26 +4,36 @@ import { ApiSchema, GherkinFeature, TestCase, TestResult } from '../types';
 import { ApiSchemaParser } from './parser';
 import { GherkinGenerator } from './gherkinGenerator';
 import { RestClient } from '../runners/restClient';
+import { PostmanRunner } from '../runners/postmanRunner';
 import { MockDataGenerator } from '../mockers/dataGenerator';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
+export enum RunnerType {
+  REST = 'rest',
+  POSTMAN = 'postman',
+}
+
 export class TestEngine {
   private parser: ApiSchemaParser;
   private gherkinGenerator: GherkinGenerator;
   private restClient: RestClient;
+  private postmanRunner: PostmanRunner;
   private mockDataGenerator: MockDataGenerator;
   private testCases: Map<string, TestCase>;
   private features: Map<string, GherkinFeature>;
   private apiSchema: ApiSchema | null;
   private useAI: boolean;
+  private runnerType: RunnerType;
 
-  constructor(options: { useAI?: boolean } = {}) {
+  constructor(options: { useAI?: boolean; runnerType?: RunnerType } = {}) {
     this.useAI = options.useAI ?? (process.env.OPENAI_API_KEY ? true : false);
+    this.runnerType = options.runnerType || RunnerType.REST;
     this.parser = new ApiSchemaParser();
     this.gherkinGenerator = new GherkinGenerator(this.useAI);
     this.restClient = new RestClient();
+    this.postmanRunner = new PostmanRunner();
     this.mockDataGenerator = new MockDataGenerator(this.useAI);
     this.testCases = new Map();
     this.features = new Map();
@@ -53,38 +63,32 @@ export class TestEngine {
       throw new Error('API schema not loaded');
     }
 
-    // Clear existing test cases
     this.testCases.clear();
     this.features.clear();
 
-    // Extract endpoints from API schema
     const endpoints = this.parser.extractEndpoints(this.apiSchema);
 
-    // Generate test cases for each endpoint
     for (const { path, method, operation } of endpoints) {
       const feature = await this.gherkinGenerator.generateFeature(path, method, operation);
       const featureId = `${method}_${path.replace(/\//g, '_')}`;
       this.features.set(featureId, feature);
 
-      // Generate context for mock data
       const context = `This is for the ${method.toUpperCase()} ${path} endpoint. ${
         operation.summary || ''
       } ${operation.description || ''}`;
 
-      // Create test case for this endpoint
       const testCase: TestCase = {
         id: this.gherkinGenerator.generateTestId(),
         feature,
         endpoint: path,
         method,
-        // Extract request body schema if available
+
         request: operation.requestBody
           ? await this.mockDataGenerator.generateFromSchema(
               this.parser.extractRequestBodySchema(operation),
               context,
             )
           : undefined,
-        // Extract expected response schema if available
         expectedResponse: operation.responses?.['200']
           ? {
               status: 200,
@@ -104,12 +108,10 @@ export class TestEngine {
    * @param outputDir Directory to save feature files
    */
   saveFeatureFiles(outputDir: string): void {
-    // Create output directory if it doesn't exist
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
     }
 
-    // Save each feature to a file
     for (const [id, feature] of this.features.entries()) {
       const featureContent = this.gherkinGenerator.featureToString(feature);
       const filePath = path.join(outputDir, `${id}.feature`);
@@ -126,19 +128,24 @@ export class TestEngine {
   async executeTests(baseUrl: string, testCaseIds?: string[]): Promise<Map<string, TestResult>> {
     const results = new Map<string, TestResult>();
 
-    // Set base URL for REST client
     this.restClient.setBaseUrl(baseUrl);
+    this.postmanRunner.setBaseUrl(baseUrl);
 
-    // Determine which test cases to run
     const testCasesToRun = testCaseIds
       ? Array.from(this.testCases.entries())
           .filter(([id]) => testCaseIds.includes(id))
           .map(([, testCase]) => testCase)
       : Array.from(this.testCases.values());
 
-    // Execute each test case
     for (const testCase of testCasesToRun) {
-      const result = await this.restClient.executeTest(testCase);
+      let result: TestResult;
+
+      if (this.runnerType === RunnerType.POSTMAN) {
+        result = await this.postmanRunner.executeTest(testCase);
+      } else {
+        result = await this.restClient.executeTest(testCase);
+      }
+
       results.set(testCase.id, result);
     }
 
@@ -160,5 +167,13 @@ export class TestEngine {
    */
   getAllTestCases(): Map<string, TestCase> {
     return this.testCases;
+  }
+
+  /**
+   * Set the runner type
+   * @param type Runner type
+   */
+  setRunnerType(type: RunnerType): void {
+    this.runnerType = type;
   }
 }

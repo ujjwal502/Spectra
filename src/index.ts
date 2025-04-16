@@ -1,10 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import { TestEngine } from './core/engine';
+import { TestEngine, RunnerType } from './core/engine';
 import { TestResult } from './types';
 
-// Load environment variables
 dotenv.config();
 
 /**
@@ -44,7 +43,9 @@ function formatTestResults(results: Map<string, TestResult>): string {
     output += '\n';
   }
 
-  output += `SUMMARY: ${passedTests}/${totalTests} tests passed (${Math.round((passedTests / totalTests) * 100)}%)\n`;
+  output += `SUMMARY: ${passedTests}/${totalTests} tests passed (${Math.round(
+    (passedTests / totalTests) * 100,
+  )}%)\n`;
 
   return output;
 }
@@ -71,16 +72,21 @@ async function main(): Promise<void> {
     const args = process.argv.slice(2);
     const command = args[0];
 
-    // Check for ai flag
     const useAI = args.includes('--ai') || args.includes('-a');
+
+    const usePostman = args.includes('--postman') || args.includes('-p');
+    const runnerType = usePostman ? RunnerType.POSTMAN : RunnerType.REST;
+
     const engineOptions = {
       useAI,
+      runnerType,
     };
 
     const engine = new TestEngine(engineOptions);
 
-    // Remove the ai flag from args for further processing
-    const processedArgs = args.filter((arg) => arg !== '--ai' && arg !== '-a');
+    const processedArgs = args.filter(
+      (arg) => arg !== '--ai' && arg !== '-a' && arg !== '--postman' && arg !== '-p',
+    );
 
     if (useAI) {
       console.log('🧠 AI-powered test generation enabled');
@@ -91,9 +97,12 @@ async function main(): Promise<void> {
       }
     }
 
+    if (usePostman) {
+      console.log('🚀 Using Postman/Newman runner for test execution');
+    }
+
     switch (command) {
       case 'generate': {
-        // Generate test cases from API schema
         const schemaPath = processedArgs[1] || 'api-schema.json';
         const outputDir = processedArgs[2] || 'features';
 
@@ -111,7 +120,6 @@ async function main(): Promise<void> {
       }
 
       case 'run': {
-        // Run tests against an API
         const schemaPath = processedArgs[1] || 'api-schema.json';
         const baseUrl = processedArgs[2] || process.env.API_BASE_URL || 'http://localhost:3000';
         const resultsPath = processedArgs[3] || 'test-results.json';
@@ -125,10 +133,8 @@ async function main(): Promise<void> {
         console.log(`Running tests against ${baseUrl}...`);
         const results = await engine.executeTests(baseUrl);
 
-        // Display results
         console.log(formatTestResults(results));
 
-        // Save results
         saveTestResults(results, resultsPath);
         console.log(`Test results saved to ${resultsPath}`);
         break;
@@ -139,15 +145,16 @@ async function main(): Promise<void> {
 API Testing Agent
 
 Usage:
-  npm run dev generate [--ai] <schema-path> <output-dir>
-  npm run dev run [--ai] <schema-path> <base-url> <results-path>
+  npm run dev generate [--ai] [--postman] <schema-path> <output-dir>
+  npm run dev run [--ai] [--postman] <schema-path> <base-url> <results-path>
 
 Options:
-  --ai, -a        Enable AI-powered test generation
+  --ai, -a          Enable AI-powered test generation
+  --postman, -p     Use Postman/Newman runner instead of direct REST client
 
 Examples:
   npm run dev generate --ai ./schemas/petstore.json ./features
-  npm run dev run ./schemas/petstore.json https://petstore.swagger.io/v2 ./results.json
+  npm run dev run --ai --postman ./schemas/petstore.json https://petstore.swagger.io/v2 ./results.json
         `);
         break;
     }
@@ -157,5 +164,4 @@ Examples:
   }
 }
 
-// Run the application
 main().catch(console.error);

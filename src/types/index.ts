@@ -1,4 +1,3 @@
-// API Schema Types
 export interface ApiSchema {
   info: {
     title: string;
@@ -66,7 +65,6 @@ export interface Example {
   description?: string;
 }
 
-// Gherkin Types
 export interface GherkinFeature {
   title: string;
   description?: string;
@@ -84,7 +82,13 @@ export interface GherkinStep {
   text: string;
 }
 
-// Test Execution Types
+export interface FileUpload {
+  fieldName: string;
+  filePath: string;
+  fileName?: string;
+  contentType?: string;
+}
+
 export interface TestCase {
   id: string;
   feature: GherkinFeature;
@@ -92,6 +96,7 @@ export interface TestCase {
   method: string;
   request?: any;
   expectedResponse?: any;
+  files?: FileUpload[];
 }
 
 export interface TestResult {
@@ -109,7 +114,6 @@ export interface AssertionResult {
   error?: string;
 }
 
-// Config Types
 export interface Config {
   api: {
     defaultTimeout: number;
