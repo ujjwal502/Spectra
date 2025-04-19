@@ -9,6 +9,7 @@ import { TestEngine, RunnerType } from '../src/core/engine';
 import fs from 'fs';
 import path from 'path';
 import { resolveReferences } from '../src/utils/schema';
+import { RegressionService } from '../src/services/regressionService';
 
 // Debug utility to inspect nested objects safely
 function safeStringify(obj: any, depth = 2) {
@@ -54,6 +55,18 @@ async function runBackendTests() {
 
     // Variables to store valid IDs
     let validTodoId = null;
+
+    // Check if we're running in regression mode
+    const isRegressionMode = process.argv.includes('--regression');
+    const shouldSaveBaseline = process.argv.includes('--save-baseline');
+
+    if (isRegressionMode) {
+      console.log('🔄 Running in regression testing mode');
+    }
+
+    if (shouldSaveBaseline) {
+      console.log('💾 Will save test results as regression baseline');
+    }
 
     // Check if the backend is running at http://localhost:3000
     try {
@@ -107,6 +120,9 @@ async function runBackendTests() {
       runnerType: RunnerType.POSTMAN,
       debug: true,
     });
+
+    // Initialize regression service
+    const regressionService = new RegressionService();
 
     // Load OpenAPI schema
     const schemaPath = path.join(__dirname, 'backend/openapi.json');
@@ -487,8 +503,59 @@ async function runBackendTests() {
     const passRate = totalRun > 0 ? Math.round((passCount / totalRun) * 100) : 0;
     console.log(`  Success rate: ${passRate}%`);
 
-    // Exit with non-zero code if any tests failed
-    if (failCount > 0) {
+    // Save test results
+    const resultsPath = path.join(__dirname, 'backend/test-results.json');
+    const resultsArray = Array.from(results.entries()).map(([id, result]) => ({
+      id,
+      ...result,
+    }));
+    fs.writeFileSync(resultsPath, JSON.stringify(resultsArray, null, 2), 'utf8');
+    console.log(`✅ Test results saved to ${resultsPath}`);
+
+    // Handle regression testing if requested
+    if (isRegressionMode || shouldSaveBaseline) {
+      const baselinePath = path.join(__dirname, 'backend/regression-baseline.json');
+
+      if (shouldSaveBaseline) {
+        // Save current results as the baseline
+        regressionService.saveBaseline(results, baselinePath);
+        console.log(`✅ Saved regression baseline to ${baselinePath}`);
+      } else if (isRegressionMode) {
+        // Load baseline and compare
+        console.log(`🔍 Loading regression baseline from ${baselinePath}...`);
+        const baselineResults = regressionService.loadBaseline(baselinePath);
+
+        if (!baselineResults) {
+          console.log(`⚠️ No baseline found at ${baselinePath}. Run with --save-baseline first.`);
+        } else {
+          console.log('🔄 Comparing current results with baseline...');
+          const regressionSummary = regressionService.compareResults(baselineResults, results);
+
+          // Display regression report
+          console.log(regressionService.formatRegressionResults(regressionSummary));
+
+          // Save regression results
+          const regressionResultsPath = path.join(__dirname, 'backend/regression-results.json');
+          fs.writeFileSync(
+            regressionResultsPath,
+            JSON.stringify(regressionSummary, null, 2),
+            'utf8',
+          );
+          console.log(`✅ Regression results saved to ${regressionResultsPath}`);
+
+          // Exit with error code if regressions found
+          if (regressionSummary.regressedTests > 0) {
+            console.log(`❌ ${regressionSummary.regressedTests} regressions detected`);
+            process.exit(1);
+          } else {
+            console.log('✅ No regressions detected');
+          }
+        }
+      }
+    }
+
+    // Exit with non-zero code if any tests failed and not in regression mode
+    if (failCount > 0 && !isRegressionMode) {
       process.exit(1);
     }
   } catch (error) {

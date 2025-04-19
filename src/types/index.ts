@@ -141,3 +141,43 @@ export interface Config {
     dataPath: string;
   };
 }
+
+// Regression Testing Types
+export interface RegressionResult {
+  id: string;
+  endpoint: string;
+  method: string;
+  baselineSuccess: boolean;
+  currentSuccess: boolean;
+  statusCodeChanged: boolean;
+  baselineStatus?: number;
+  currentStatus?: number;
+  responseChanged: boolean;
+  responseChanges?: ResponseDiff[];
+  assertionsChanged: boolean;
+  assertionChanges?: AssertionDiff[];
+  isRegression: boolean;
+}
+
+export interface ResponseDiff {
+  path: string;
+  baselineValue: any;
+  currentValue: any;
+}
+
+export interface AssertionDiff {
+  name: string;
+  baselineSuccess: boolean;
+  currentSuccess: boolean;
+}
+
+export interface RegressionSummary {
+  totalTests: number;
+  newTests: number;
+  removedTests: number;
+  matchingTests: number;
+  regressedTests: number;
+  improvedTests: number;
+  unchangedTests: number;
+  details: RegressionResult[];
+}

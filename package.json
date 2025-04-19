@@ -22,8 +22,12 @@
     "run:ai": "ts-node src/index.ts run --ai",
     "run:postman": "ts-node src/index.ts run --postman",
     "run:ai:postman": "ts-node src/index.ts run --ai --postman",
+    "regression:baseline": "ts-node src/index.ts regression:baseline --ai --postman",
+    "regression:run": "ts-node src/index.ts regression:run --ai --postman",
     "example:file-upload": "ts-node examples/file-upload-test.ts",
-    "test:backend": "ts-node examples/backend-test.ts"
+    "test:backend": "ts-node examples/backend-test.ts",
+    "test:backend:regression:baseline": "ts-node examples/backend-test.ts --save-baseline",
+    "test:backend:regression": "ts-node examples/backend-test.ts --regression"
   },
   "keywords": [
     "api",

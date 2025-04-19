@@ -17,6 +17,7 @@ Spectra is an advanced API testing automation tool that uses AI to generate, man
 
 - [Newman Integration Guide](./docs/NEWMAN_INTEGRATION.md) - Details on the Postman/Newman integration
 - [File Upload Guide](./docs/FILE_UPLOAD_GUIDE.md) - Step-by-step guide for testing file uploads
+- [Regression Testing Guide](./docs/REGRESSION_TESTING.md) - How to detect API regressions
 - [Example: File Uploads](./examples/file-upload-test.ts) - Complete example of file upload testing
 
 ## Installation
@@ -95,6 +96,20 @@ AI-Enhanced Execution with Postman:
 
 ```bash
 npm run run:ai:postman -- path/to/openapi.json https://api-base-url.com ./results.json
+```
+
+#### Regression Testing
+
+Create Baseline:
+
+```bash
+npm run regression:baseline -- path/to/openapi.json https://api-base-url.com ./baseline.json
+```
+
+Run Regression Tests:
+
+```bash
+npm run regression:run -- path/to/openapi.json https://api-base-url.com ./baseline.json ./results.json
 ```
 
 All execution modes will:
@@ -222,6 +237,19 @@ This example demonstrates:
 - **File Handling**: Uses streams to efficiently handle large files
 - **Error Handling**: Validates file existence before attempting uploads
 
+### Regression Testing
+
+Spectra includes robust regression testing capabilities to detect unexpected changes in API behavior:
+
+- **AI-Enhanced Testing**: Uses AI to generate comprehensive test scenarios
+- **Postman Integration**: Leverages Postman/Newman for powerful execution and validation
+- **Baseline Management**: Establish a baseline of expected behavior
+- **Comprehensive Comparison**: Track status codes, response bodies, and assertion results
+- **Detailed Reports**: Clear insight into what changed and why
+- **CI/CD Integration**: Fail builds when regressions are detected
+
+See the [Regression Testing Guide](./docs/REGRESSION_TESTING.md) for detailed usage instructions.
+
 ## Development Roadmap
 
 ### Phase 1: Foundation ✅
@@ -240,6 +268,7 @@ This example demonstrates:
 
 - Postman/Newman integration for test execution
 - File upload support for multipart/form-data requests
+- Regression testing for detecting API behavior changes
 - CI/CD integration (Coming soon)
 - Dashboard for test results (Coming soon)
 
