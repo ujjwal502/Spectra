@@ -1,0 +1,886 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Spectra Test Backend API",
+    "description": "Comprehensive API for testing the Spectra testing framework",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000/api"
+    }
+  ],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "summary": "User login",
+        "description": "Authenticate a user and get a JWT token",
+        "operationId": "loginUser",
+        "requestBody": {
+          "description": "Login credentials",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful login",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "summary": "Register a new user",
+        "description": "Create a new user account",
+        "operationId": "registerUser",
+        "requestBody": {
+          "description": "User registration data",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User registered successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error or user already exists"
+          }
+        }
+      }
+    },
+    "/products": {
+      "get": {
+        "summary": "Get all products",
+        "description": "Retrieve all products with optional filtering and pagination",
+        "operationId": "getProducts",
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Filter by category",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "minPrice",
+            "in": "query",
+            "description": "Minimum price",
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "name": "maxPrice",
+            "in": "query",
+            "description": "Maximum price",
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "name": "inStock",
+            "in": "query",
+            "description": "Filter by availability",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page number",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Items per page",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of products",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a new product",
+        "description": "Add a new product (admin only)",
+        "operationId": "createProduct",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "description": "Product to add",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProductCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Product created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - Admin only"
+          }
+        }
+      }
+    },
+    "/products/{id}": {
+      "get": {
+        "summary": "Get product by ID",
+        "description": "Retrieve a specific product by its ID",
+        "operationId": "getProductById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Product ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Product"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Product not found"
+          }
+        }
+      }
+    },
+    "/uploads/single": {
+      "post": {
+        "summary": "Upload a single file",
+        "description": "Upload a file to the server",
+        "operationId": "uploadSingleFile",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "File uploaded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Upload error"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/todos": {
+      "get": {
+        "summary": "Get all todos",
+        "description": "Retrieve all todos",
+        "operationId": "getTodos",
+        "responses": {
+          "200": {
+            "description": "List of todos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Todo"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a new todo",
+        "description": "Add a new todo",
+        "operationId": "createTodo",
+        "requestBody": {
+          "description": "Todo to add",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Todo created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Todo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update all todos completion status",
+        "description": "Toggle completion status for all todos",
+        "operationId": "updateAllTodos",
+        "requestBody": {
+          "description": "Completion status",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["completed"],
+                "properties": {
+                  "completed": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Todos updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodosUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          }
+        }
+      }
+    },
+    "/todos/{id}": {
+      "get": {
+        "summary": "Get todo by ID",
+        "description": "Retrieve a specific todo by its ID",
+        "operationId": "getTodoById",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Todo ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Todo details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Todo"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Todo not found"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update a todo",
+        "description": "Update an existing todo",
+        "operationId": "updateTodo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Todo ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Todo data to update",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Todo updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Todo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error"
+          },
+          "404": {
+            "description": "Todo not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a todo",
+        "description": "Remove a todo by its ID",
+        "operationId": "deleteTodo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Todo ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Todo deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Todo not found"
+          }
+        }
+      }
+    },
+    "/weather": {
+      "get": {
+        "summary": "Get all weather data",
+        "description": "Retrieve weather data for all cities",
+        "operationId": "getAllWeather",
+        "responses": {
+          "200": {
+            "description": "List of weather data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WeatherData"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/weather/delayed": {
+      "get": {
+        "summary": "Get weather data with delay",
+        "description": "Retrieve weather data with a simulated delay",
+        "operationId": "getDelayedWeather",
+        "parameters": [
+          {
+            "name": "delay",
+            "in": "query",
+            "description": "Delay in seconds (1-10)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 2
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delayed weather data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WeatherData"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/weather/error": {
+      "get": {
+        "summary": "Simulated error endpoint",
+        "description": "Endpoint that returns the specified error code",
+        "operationId": "getWeatherError",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "HTTP error code (400-599)",
+            "schema": {
+              "type": "integer",
+              "minimum": 400,
+              "maximum": 599,
+              "default": 500
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "user@example.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "user123"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string",
+                "format": "email"
+              },
+              "role": {
+                "type": "string",
+                "enum": ["user", "admin"]
+              }
+            }
+          }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["username", "email", "password"],
+        "properties": {
+          "username": {
+            "type": "string",
+            "example": "testuser"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "testuser@example.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "password123"
+          }
+        }
+      },
+      "Product": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number",
+            "format": "float"
+          },
+          "category": {
+            "type": "string"
+          },
+          "inStock": {
+            "type": "boolean"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProductsResponse": {
+        "type": "object",
+        "properties": {
+          "products": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Product"
+            }
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "page": {
+                "type": "integer"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "pages": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "ProductCreateRequest": {
+        "type": "object",
+        "required": ["name", "description", "price", "category"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "New Product"
+          },
+          "description": {
+            "type": "string",
+            "example": "Description of the new product"
+          },
+          "price": {
+            "type": "number",
+            "format": "float",
+            "example": 99.99
+          },
+          "category": {
+            "type": "string",
+            "example": "Electronics"
+          },
+          "quantity": {
+            "type": "integer",
+            "example": 10
+          },
+          "inStock": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "FileUploadResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "file": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "originalName": {
+                "type": "string"
+              },
+              "fileName": {
+                "type": "string"
+              },
+              "fileSize": {
+                "type": "integer"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "uploadedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Todo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TodoCreateRequest": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "example": "Buy groceries"
+          },
+          "completed": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "TodoUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TodosUpdateResponse": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "todos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Todo"
+            }
+          }
+        }
+      },
+      "WeatherData": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "temperature": {
+            "type": "number",
+            "format": "float"
+          },
+          "conditions": {
+            "type": "string"
+          },
+          "humidity": {
+            "type": "number"
+          },
+          "windSpeed": {
+            "type": "number",
+            "format": "float"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "code": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

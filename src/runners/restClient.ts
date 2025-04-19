@@ -3,6 +3,7 @@ import { TestCase, TestResult, AssertionResult } from '../types';
 import { ResponseValidator } from '../validators/responseValidator';
 import * as fs from 'fs';
 import FormData from 'form-data';
+import { validateSchema } from '../utils/schema';
 
 export class RestClient {
   private axios: AxiosInstance;
@@ -90,11 +91,35 @@ export class RestClient {
       assertions.push(statusAssertion);
 
       if (testCase.expectedResponse?.schema) {
-        const schemaAssertion = this.validator.validateAgainstSchema(
-          response.data,
-          testCase.expectedResponse.schema,
-        );
-        assertions.push(schemaAssertion);
+        try {
+          const parsedBody =
+            typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+
+          const validationResult = validateSchema(testCase.expectedResponse.schema, parsedBody);
+
+          if (!validationResult.valid) {
+            const errorMsg = validationResult.errors
+              ? validationResult.errors.map((e) => `${e.instancePath} ${e.message}`).join(', ')
+              : 'Unknown schema validation error';
+
+            assertions.push({
+              name: 'Schema validation',
+              success: false,
+              error: `Schema validation error: ${errorMsg}`,
+            });
+          } else {
+            assertions.push({
+              name: 'Schema validation',
+              success: true,
+            });
+          }
+        } catch (error) {
+          assertions.push({
+            name: 'Schema validation',
+            success: false,
+            error: `Error validating response: ${error}`,
+          });
+        }
       }
 
       const timeAssertion = this.validator.validateResponseTime(

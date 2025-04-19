@@ -15,6 +15,26 @@ export enum RunnerType {
   POSTMAN = 'postman',
 }
 
+/**
+ * Configuration options for the test engine
+ */
+export interface EngineConfig {
+  /**
+   * Whether to use AI for generating test cases
+   */
+  useAI: boolean;
+
+  /**
+   * The type of test runner to use
+   */
+  runnerType: RunnerType;
+
+  /**
+   * Whether to enable debug logging
+   */
+  debug?: boolean;
+}
+
 export class TestEngine {
   private parser: ApiSchemaParser;
   private gherkinGenerator: GherkinGenerator;
@@ -26,10 +46,22 @@ export class TestEngine {
   private apiSchema: ApiSchema | null;
   private useAI: boolean;
   private runnerType: RunnerType;
+  private config: EngineConfig;
+  private debug: boolean;
 
-  constructor(options: { useAI?: boolean; runnerType?: RunnerType } = {}) {
-    this.useAI = options.useAI ?? (process.env.OPENAI_API_KEY ? true : false);
-    this.runnerType = options.runnerType || RunnerType.REST;
+  constructor(config?: Partial<EngineConfig>) {
+    this.config = {
+      useAI: config?.useAI ?? false,
+      runnerType: config?.runnerType ?? RunnerType.POSTMAN,
+    };
+    this.debug = config?.debug ?? false;
+
+    if (this.debug) {
+      console.log(`🔧 TestEngine initialized with config: ${JSON.stringify(this.config)}`);
+    }
+
+    this.useAI = this.config.useAI;
+    this.runnerType = this.config.runnerType;
     this.parser = new ApiSchemaParser();
     this.gherkinGenerator = new GherkinGenerator(this.useAI);
     this.restClient = new RestClient();
@@ -175,5 +207,18 @@ export class TestEngine {
    */
   setRunnerType(type: RunnerType): void {
     this.runnerType = type;
+  }
+
+  /**
+   * Sets the API schema to use for test generation
+   * This allows for using a pre-processed schema (e.g., with resolved references)
+   *
+   * @param schema The OpenAPI schema object
+   */
+  public setApiSchema(schema: any): void {
+    if (this.debug) {
+      console.log('📝 Setting API schema manually');
+    }
+    this.apiSchema = schema;
   }
 }

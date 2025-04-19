@@ -5,6 +5,7 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { TestCase, TestResult, AssertionResult } from '../types';
 import { ResponseValidator } from '../validators/responseValidator';
+import { validateSchema } from '../utils/schema';
 
 interface NewmanRunOptions {
   collection: any;
@@ -24,6 +25,8 @@ interface NewmanRun {
       response?: {
         code: number;
         json: () => any;
+        text?: () => string;
+        stream?: any;
         headers: any;
       };
       assertions?: Array<{
@@ -67,106 +70,104 @@ export class PostmanRunner {
    */
   async executeTest(testCase: TestCase): Promise<TestResult> {
     const startTime = Date.now();
-    const assertions: AssertionResult[] = [];
-    let success = false;
-    let responseData: any = null;
-    let errorMessage: string | undefined = undefined;
+    let assertions: AssertionResult[] = [];
+    let responseObj: any = null;
+    let success = true;
 
     try {
-      if (testCase.files && testCase.files.length > 0) {
-        for (const file of testCase.files) {
-          if (!fs.existsSync(file.filePath)) {
-            throw new Error(`File not found: ${file.filePath}`);
-          }
-        }
-      }
-
+      // Setup collection and environment files
       const collection = this.convertToPostmanCollection(testCase);
-
       const collectionPath = path.join(this.tempDir, `${testCase.id}.json`);
       fs.writeFileSync(collectionPath, JSON.stringify(collection, null, 2));
 
       const environment = {
         name: 'Test Environment',
-        values: [
-          {
-            key: 'baseUrl',
-            value: this.baseUrl,
-            enabled: true,
-          },
-        ],
+        values: [{ key: 'baseUrl', value: this.baseUrl, enabled: true }],
       };
-
       const environmentPath = path.join(this.tempDir, `${testCase.id}_env.json`);
       fs.writeFileSync(environmentPath, JSON.stringify(environment, null, 2));
 
+      // Run Newman
       const newmanResult = await this.runNewman(collectionPath, environmentPath);
-
       const duration = Date.now() - startTime;
 
-      if (
-        newmanResult.run &&
-        newmanResult.run.executions &&
-        newmanResult.run.executions.length > 0
-      ) {
-        const execution = newmanResult.run.executions[0];
+      // Extract the response if available
+      if (newmanResult.run?.executions?.[0]?.response) {
+        const response = newmanResult.run.executions[0].response;
+        let responseBody;
 
-        if (execution.response) {
-          responseData = execution.response.json();
-
-          const statusAssertion = this.validator.validateStatusCode(
-            execution.response.code,
-            testCase.expectedResponse?.status || 200,
-          );
-          assertions.push(statusAssertion);
-
-          if (testCase.expectedResponse?.schema) {
-            const schemaAssertion = this.validator.validateAgainstSchema(
-              responseData,
-              testCase.expectedResponse.schema,
-            );
-            assertions.push(schemaAssertion);
-          }
-
-          const timeAssertion = this.validator.validateResponseTime(
-            duration,
-            testCase.expectedResponse?.maxResponseTime || 2000,
-          );
-          assertions.push(timeAssertion);
+        try {
+          responseBody = response.json();
+        } catch (e) {
+          responseBody = response.stream || response.code.toString();
         }
 
-        if (execution.assertions) {
-          for (const assertion of execution.assertions) {
-            if (!assertion.passed) {
-              assertions.push({
-                name: assertion.assertion,
-                success: false,
-                error: assertion.error?.message,
-              });
-            } else {
-              assertions.push({
-                name: assertion.assertion,
-                success: true,
-              });
-            }
-          }
-        }
+        responseObj = {
+          status: response.code,
+          body: responseBody,
+          headers: response.headers?.toJSON?.() || response.headers || {},
+        };
       }
 
+      // Process Newman assertions - fix the issue with conflicting passed status
+      if (newmanResult.run?.executions?.[0]?.assertions) {
+        const newmanAssertions = newmanResult.run.executions[0].assertions;
+
+        // Clear any existing assertions
+        assertions = [];
+
+        console.log('\nDebug - Newman Assertions:');
+        for (const assertion of newmanAssertions) {
+          // Look for success symbol in Newman output by checking if assertion has a checkmark in the output
+          const wasPassed = !assertion.error; // If there's no error, it passed
+
+          console.log(
+            `  ${assertion.assertion}: ${wasPassed ? 'PASSED (no error)' : 'FAILED (has error)'}`,
+          );
+          console.log(`    Error info: ${assertion.error ? assertion.error.message : 'No error'}`);
+
+          // Add each assertion result in our format
+          assertions.push({
+            name: assertion.assertion,
+            success: wasPassed,
+            error: assertion.error?.message,
+          });
+        }
+
+        // Test is successful only if ALL assertions passed (no errors)
+        success = newmanAssertions.every((assertion) => !assertion.error);
+      } else {
+        // No assertions ran - mark as failed
+        success = false;
+        assertions = [
+          {
+            name: 'Test execution',
+            success: false,
+            error: 'No assertions were executed',
+          },
+        ];
+      }
+
+      // Clean up temp files
       this.cleanupTempFiles(testCase.id);
 
-      success = assertions.every((assertion) => assertion.success);
+      // Print final assertions after processing
+      console.log('\nAssertions after processing:');
+      assertions.forEach((a) => {
+        console.log(`  ${a.name}: ${a.success ? 'SUCCESS' : 'FAIL'}`);
+      });
+      console.log(`Overall test success: ${success ? 'PASS' : 'FAIL'}`);
 
+      // Return result
       return {
         testCase,
         success,
         duration,
-        response: responseData,
+        response: responseObj,
         assertions,
       };
     } catch (error: any) {
       const duration = Date.now() - startTime;
-
       this.cleanupTempFiles(testCase.id);
 
       return {
@@ -174,7 +175,13 @@ export class PostmanRunner {
         success: false,
         duration,
         error: error.message,
-        assertions,
+        assertions: [
+          {
+            name: 'Test execution',
+            success: false,
+            error: `Error executing test: ${error.message}`,
+          },
+        ],
       };
     }
   }
@@ -336,10 +343,19 @@ export class PostmanRunner {
     ];
 
     if (testCase.expectedResponse?.schema) {
+      // For schema validation tests, check if the response is valid and status code is successful
       tests.push('');
       tests.push('pm.test("Response matches schema", function() {');
-      tests.push('    const schema = ' + JSON.stringify(testCase.expectedResponse.schema) + ';');
-      tests.push('    pm.expect(pm.response.json()).to.be.jsonSchema(schema);');
+
+      // Only validate schema for success responses
+      if (expectedStatus < 400) {
+        tests.push('    const schema = ' + JSON.stringify(testCase.expectedResponse.schema) + ';');
+        tests.push('    pm.expect(pm.response.json()).to.be.jsonSchema(schema);');
+      } else {
+        // For error responses, just validate it's a valid JSON
+        tests.push('    pm.expect(() => pm.response.json()).not.to.throw();');
+      }
+
       tests.push('});');
     }
 
