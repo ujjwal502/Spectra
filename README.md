@@ -12,6 +12,7 @@ Spectra is an advanced API testing automation tool that uses AI to generate, man
 - 🔌 **Tech-Agnostic**: Works with any API regardless of implementation
 - 🚀 **Dual Execution Engines**: Run tests directly via REST client or through Postman/Newman
 - 📁 **File Upload Support**: Test APIs that require file uploads with multipart/form-data
+- 📈 **Interactive Dashboard**: Visualize test results and regression data through a web interface
 
 ## Documentation
 
@@ -19,6 +20,7 @@ Spectra is an advanced API testing automation tool that uses AI to generate, man
 - [File Upload Guide](./docs/FILE_UPLOAD_GUIDE.md) - Step-by-step guide for testing file uploads
 - [Regression Testing Guide](./docs/REGRESSION_TESTING.md) - How to detect API regressions
 - [Example: File Uploads](./examples/file-upload-test.ts) - Complete example of file upload testing
+- [Dashboard Guide](./docs/DASHBOARD_GUIDE.md) - How to use the Spectra Dashboard
 
 ## Installation
 
@@ -119,6 +121,17 @@ All execution modes will:
 3. Display results in the console
 4. Save detailed results to a JSON file
 
+### Dashboard
+
+To access the Spectra Dashboard:
+
+```bash
+# Start the dashboard server
+npm run dashboard
+```
+
+Then open your browser to `http://localhost:5173` to access the dashboard.
+
 ## Runner Types
 
 ### REST Client
@@ -143,6 +156,18 @@ When running with the AI mode enabled:
 - **Improved Validation**: Better assertions based on expected behavior
 
 ## Advanced Features
+
+### Spectra Dashboard
+
+The Spectra Dashboard provides a modern web interface for visualizing and analyzing your API test results:
+
+- **Test Summary**: Overview of pass/fail rates and test coverage
+- **Interactive Charts**: Visual representation of test performance over time
+- **Regression Analysis**: Compare test results against baselines to identify changes
+- **Detailed Inspection**: Examine API responses, assertions, and failures
+- **Filtering and Search**: Quickly find specific test cases or endpoints
+
+The dashboard leverages a modern frontend stack with responsive design for easy access from any device.
 
 ### File Uploads
 
@@ -269,8 +294,8 @@ See the [Regression Testing Guide](./docs/REGRESSION_TESTING.md) for detailed us
 - Postman/Newman integration for test execution
 - File upload support for multipart/form-data requests
 - Regression testing for detecting API behavior changes
+- Interactive dashboard for test results ✅
 - CI/CD integration (Coming soon)
-- Dashboard for test results (Coming soon)
 
 ### Phase 4: Enterprise Features
 
