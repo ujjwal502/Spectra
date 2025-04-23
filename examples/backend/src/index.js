@@ -15,6 +15,7 @@ const weatherRoutes = require('./routes/weather');
 const tasksRoutes = require('./routes/tasks');
 const todoRoutes = require('./routes/todos');
 const streamRoutes = require('./routes/streams');
+const spectraRoutes = require('./routes/spectra');
 
 // Load environment variables
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -35,6 +36,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(uploadsDir));
 
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, '../public')));
+
 // Basic health endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
@@ -54,6 +58,12 @@ app.use('/api/weather', weatherRoutes);
 app.use('/api/tasks', tasksRoutes);
 app.use('/api/todos', todoRoutes);
 app.use('/api/streams', streamRoutes);
+app.use('/api/spectra', spectraRoutes);
+
+// Serve the dashboard SPA for any other routes
+app.get('/dashboard*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
 
 // 404 handler
 app.use((req, res) => {
@@ -78,4 +88,6 @@ app.listen(PORT, () => {
   console.log(`⚡️ Server running on http://localhost:${PORT}`);
   console.log(`  Health check: http://localhost:${PORT}/health`);
   console.log(`  API endpoints available at: http://localhost:${PORT}/api/*`);
+  console.log(`  Spectra API: http://localhost:${PORT}/api/spectra/*`);
+  console.log(`  Dashboard: http://localhost:${PORT}/dashboard`);
 });

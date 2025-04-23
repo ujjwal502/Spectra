@@ -54,8 +54,6 @@ export class AIService {
     try {
       const prompt = this.buildMockDataPrompt(schema, context);
 
-      console.log('model used', process.env.OPENAI_MODEL);
-
       const response = await this.openai.chat.completions.create({
         model: process.env.OPENAI_MODEL || 'gpt-4',
         messages: [
