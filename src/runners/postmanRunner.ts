@@ -107,6 +107,54 @@ export class PostmanRunner {
           body: responseBody,
           headers: response.headers?.toJSON?.() || response.headers || {},
         };
+
+        // Manually perform schema validation to ensure consistency with RestClient
+        if (testCase.expectedResponse?.schema && responseBody) {
+          try {
+            const validationResult = validateSchema(testCase.expectedResponse.schema, responseBody);
+
+            // Look for existing schema validation assertions
+            const existingSchemaAssertion = assertions.find(
+              (a) => a.name === 'Response matches schema' || a.name === 'Schema validation',
+            );
+
+            // If no schema assertion exists yet, add one
+            if (!existingSchemaAssertion) {
+              if (!validationResult.valid) {
+                const errorMsg = validationResult.errors
+                  ? validationResult.errors.map((e) => `${e.instancePath} ${e.message}`).join(', ')
+                  : 'Unknown schema validation error';
+
+                assertions.push({
+                  name: 'Schema validation',
+                  success: false,
+                  error: `Schema validation error: ${errorMsg}`,
+                });
+                success = false;
+              } else {
+                assertions.push({
+                  name: 'Schema validation',
+                  success: true,
+                });
+              }
+            }
+          } catch (error) {
+            // Add explicit schema validation failure
+            assertions.push({
+              name: 'Schema validation',
+              success: false,
+              error: `Error validating response: ${error}`,
+            });
+            success = false;
+          }
+        } else if (testCase.expectedResponse && !testCase.expectedResponse.schema) {
+          // Always add a placeholder schema validation assertion for consistency
+          assertions.push({
+            name: 'Schema validation',
+            success: true,
+            info: 'No schema validation performed (no schema specified)',
+          });
+        }
       }
 
       // Process Newman assertions - fix the issue with conflicting passed status

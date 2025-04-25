@@ -200,13 +200,26 @@ export class RegressionService {
     const assertionChanges = this.compareAssertions(baselineResult, currentResult);
     const assertionsChanged = assertionChanges.length > 0;
 
+    // Check specifically for schema validation failures
+    const schemaValidationRegression = this.hasSchemaValidationRegression(
+      baselineResult,
+      currentResult,
+    );
+
+    // Check for structural changes in response
+    const structuralChangeRegression = this.hasStructuralChanges(responseChanges);
+
     // Determine if this is a regression:
     // 1. Test was successful in baseline but failed in current run
     // 2. Status code changed to a different one (e.g., 200 -> 400)
-    // 3. Critical assertions started failing
+    // 3. Schema validation regression detected
+    // 4. Response structure changed significantly
+    // 5. Critical assertions started failing
     const isRegression =
       (baselineResult.success && !currentResult.success) ||
-      (statusCodeChanged && this.isStatusCodeRegression(baselineStatus || 0, currentStatus || 0));
+      (statusCodeChanged && this.isStatusCodeRegression(baselineStatus || 0, currentStatus || 0)) ||
+      schemaValidationRegression ||
+      structuralChangeRegression;
 
     return {
       id,
@@ -226,6 +239,28 @@ export class RegressionService {
   }
 
   /**
+   * Checks if there's a schema validation regression between baseline and current results
+   * @param baselineResult Baseline test result
+   * @param currentResult Current test result
+   * @returns True if a schema validation regression is detected
+   */
+  private hasSchemaValidationRegression(
+    baselineResult: TestResult,
+    currentResult: TestResult,
+  ): boolean {
+    // Look for schema validation assertions
+    const baselineSchemaAssertion = baselineResult.assertions?.find(
+      (a) => a.name === 'Schema validation',
+    );
+    const currentSchemaAssertion = currentResult.assertions?.find(
+      (a) => a.name === 'Schema validation',
+    );
+
+    // If schema validation was successful in baseline but failed in current result
+    return baselineSchemaAssertion?.success === true && currentSchemaAssertion?.success === false;
+  }
+
+  /**
    * Compares response bodies to find differences
    * @param baselineResult Baseline test result
    * @param currentResult Current test result
@@ -238,20 +273,162 @@ export class RegressionService {
       return differences;
     }
 
-    // For simplicity, just check if the response is different by comparing JSON strings
-    // A more sophisticated implementation would do a deep comparison and identify specific fields
+    // Parse response bodies
     const baselineBody = baselineResult.response.body || baselineResult.response;
     const currentBody = currentResult.response.body || currentResult.response;
 
+    // If responses are completely different, record the entire difference
     if (JSON.stringify(baselineBody) !== JSON.stringify(currentBody)) {
+      // Simple approach: record that responses differ
       differences.push({
         path: 'response.body',
         baselineValue: baselineBody,
         currentValue: currentBody,
       });
+
+      // Try to find specific schema difference by checking schema validation assertions
+      const baselineSchemaAssertion = baselineResult.assertions?.find(
+        (a) => a.name === 'Schema validation',
+      );
+      const currentSchemaAssertion = currentResult.assertions?.find(
+        (a) => a.name === 'Schema validation',
+      );
+
+      if (baselineSchemaAssertion?.success && !currentSchemaAssertion?.success) {
+        differences.push({
+          path: 'schema.validation',
+          baselineValue: 'passed',
+          currentValue: currentSchemaAssertion?.error || 'failed',
+        });
+      } else {
+        // Check for structural differences, even if schema validation passed
+        // This helps detect property name changes or additions
+        try {
+          // For objects, we'll check the structure
+          if (typeof baselineBody === 'object' && typeof currentBody === 'object') {
+            const structuralDiff = this.compareObjectStructure(baselineBody, currentBody);
+            if (structuralDiff.length > 0) {
+              differences.push({
+                path: 'response.structure',
+                baselineValue: this.getObjectStructureSummary(baselineBody),
+                currentValue: this.getObjectStructureSummary(currentBody),
+                details: structuralDiff,
+              });
+            }
+          }
+        } catch (error) {
+          // In case of error comparing structures, log and continue
+          console.warn('Error comparing response structures:', error);
+        }
+      }
     }
 
     return differences;
+  }
+
+  /**
+   * Compare the structure of two objects to find property differences
+   * @param baseline Baseline object
+   * @param current Current object
+   * @param path Current property path
+   * @returns Array of structure differences
+   */
+  private compareObjectStructure(baseline: any, current: any, path: string = ''): string[] {
+    const differences: string[] = [];
+
+    // Handle arrays
+    if (Array.isArray(baseline) && Array.isArray(current)) {
+      // If arrays, check the first item's structure if available
+      if (baseline.length > 0 && current.length > 0) {
+        const baselineItem = baseline[0];
+        const currentItem = current[0];
+
+        if (typeof baselineItem === 'object' && typeof currentItem === 'object') {
+          const arrayDiffs = this.compareObjectStructure(
+            baselineItem,
+            currentItem,
+            path ? `${path}[0]` : '[0]',
+          );
+          differences.push(...arrayDiffs);
+        }
+      }
+      return differences;
+    }
+
+    // Handle null
+    if (baseline === null || current === null) {
+      if (baseline !== current) {
+        differences.push(
+          `${path}: was ${baseline === null ? 'null' : typeof baseline}, now ${current === null ? 'null' : typeof current}`,
+        );
+      }
+      return differences;
+    }
+
+    // Only compare objects
+    if (typeof baseline !== 'object' || typeof current !== 'object') {
+      if (typeof baseline !== typeof current) {
+        differences.push(`${path}: type changed from ${typeof baseline} to ${typeof current}`);
+      }
+      return differences;
+    }
+
+    // Find properties in baseline but not in current
+    for (const key of Object.keys(baseline)) {
+      const currentPath = path ? `${path}.${key}` : key;
+
+      if (!(key in current)) {
+        differences.push(`${currentPath}: removed (was present in baseline)`);
+        continue;
+      }
+
+      // Check type changes
+      if (typeof baseline[key] !== typeof current[key]) {
+        differences.push(
+          `${currentPath}: type changed from ${typeof baseline[key]} to ${typeof current[key]}`,
+        );
+        continue;
+      }
+
+      // Recursively check nested objects
+      if (
+        typeof baseline[key] === 'object' &&
+        baseline[key] !== null &&
+        typeof current[key] === 'object' &&
+        current[key] !== null
+      ) {
+        const nestedDiffs = this.compareObjectStructure(baseline[key], current[key], currentPath);
+        differences.push(...nestedDiffs);
+      }
+    }
+
+    // Find properties in current but not in baseline
+    for (const key of Object.keys(current)) {
+      const currentPath = path ? `${path}.${key}` : key;
+
+      if (!(key in baseline)) {
+        differences.push(`${currentPath}: added (not present in baseline)`);
+      }
+    }
+
+    return differences;
+  }
+
+  /**
+   * Get a simple summary of an object's structure
+   * @param obj Object to summarize
+   * @returns Structure summary
+   */
+  private getObjectStructureSummary(obj: any): string {
+    if (!obj) return 'null or undefined';
+    if (typeof obj !== 'object') return typeof obj;
+
+    if (Array.isArray(obj)) {
+      return `array with ${obj.length} items`;
+    }
+
+    const keys = Object.keys(obj);
+    return `object with keys: ${keys.join(', ')}`;
   }
 
   /**
@@ -334,6 +511,21 @@ export class RegressionService {
   }
 
   /**
+   * Checks if the response has structural changes
+   * @param responseChanges Array of response differences
+   * @returns True if structural changes are detected
+   */
+  private hasStructuralChanges(responseChanges: ResponseDiff[] | undefined): boolean {
+    if (!responseChanges) return false;
+
+    // Look for structural changes
+    return responseChanges.some(
+      (change) =>
+        change.path === 'response.structure' && change.details && change.details.length > 0,
+    );
+  }
+
+  /**
    * Format regression results for console output
    * @param summary Regression summary
    * @returns Formatted string for console output
@@ -362,6 +554,37 @@ export class RegressionService {
 
           if (detail.statusCodeChanged) {
             output += `   Status code: ${detail.baselineStatus} → ${detail.currentStatus}\n`;
+          }
+
+          // Check for schema validation failures specifically
+          const schemaValidationRegressions = detail.responseChanges?.filter(
+            (change) => change.path === 'schema.validation',
+          );
+
+          if (schemaValidationRegressions && schemaValidationRegressions.length > 0) {
+            output += '   Schema validation regressions:\n';
+            schemaValidationRegressions.forEach((regression) => {
+              output += `     - ${regression.currentValue}\n`;
+            });
+          }
+
+          // Check for structural differences in responses
+          const structuralChanges = detail.responseChanges?.filter(
+            (change) => change.path === 'response.structure',
+          );
+
+          if (structuralChanges && structuralChanges.length > 0) {
+            output += '   Response structure changes:\n';
+            structuralChanges.forEach((change) => {
+              output += `     - Changed from ${change.baselineValue} to ${change.currentValue}\n`;
+
+              // Show detailed structure differences
+              if (change.details && change.details.length > 0) {
+                change.details.forEach((diff) => {
+                  output += `       • ${diff}\n`;
+                });
+              }
+            });
           }
 
           if (detail.assertionsChanged && detail.assertionChanges) {

@@ -120,6 +120,14 @@ export class RestClient {
             error: `Error validating response: ${error}`,
           });
         }
+      } else if (testCase.expectedResponse) {
+        // Always add at least a placeholder schema assertion when there's an expected response
+        // This ensures regression testing can track schema changes consistently
+        assertions.push({
+          name: 'Schema validation',
+          success: true,
+          info: 'No schema validation performed (no schema specified)',
+        });
       }
 
       const timeAssertion = this.validator.validateResponseTime(

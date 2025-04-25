@@ -112,6 +112,7 @@ export interface AssertionResult {
   name: string;
   success: boolean;
   error?: string;
+  info?: string;
 }
 
 export interface Config {
@@ -163,6 +164,7 @@ export interface ResponseDiff {
   path: string;
   baselineValue: any;
   currentValue: any;
+  details?: string[];
 }
 
 export interface AssertionDiff {
