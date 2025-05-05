@@ -18,6 +18,11 @@
     "generate:ai": "ts-node src/index.ts generate --ai",
     "generate:postman": "ts-node src/index.ts generate --postman",
     "generate:ai:postman": "ts-node src/index.ts generate --ai --postman",
+    "generate:spec": "ts-node src/index.ts generate-spec",
+    "generate:spec:backend": "ts-node src/index.ts generate-spec examples/backend ./examples/backend/generated-schema.json",
+    "generate:spec:decision-services": "ts-node src/index.ts generate-spec examples/rp-ccs-decision-services-ao--hk-hbap-develop ./examples/rp-ccs-decision-services-ao--hk-hbap-develop/generated-schema.json",
+    "generate:spec:ds-ao": "ts-node src/index.ts generate-spec examples/rp-ccs-ds-ao--hk-hbap-develop ./examples/rp-ccs-ds-ao--hk-hbap-develop/generated-schema.json",
+    "generate:spec:ds-router": "ts-node src/index.ts generate-spec examples/rp-ccs-ds-ao-router-hcc--hk-hbap-develop ./examples/rp-ccs-ds-ao-router-hcc--hk-hbap-develop/generated-schema.json",
     "run": "ts-node src/index.ts run",
     "run:ai": "ts-node src/index.ts run --ai",
     "run:postman": "ts-node src/index.ts run --postman",
@@ -64,6 +69,7 @@
     "typescript": "^5.8.3"
   },
   "devDependencies": {
+    "@types/glob": "^8.1.0",
     "@types/uuid": "^10.0.0",
     "@typescript-eslint/eslint-plugin": "^8.29.1",
     "@typescript-eslint/parser": "^8.29.1",

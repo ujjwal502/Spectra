@@ -1,9 +1,14 @@
 export interface ApiSchema {
+  openapi?: string;
   info: {
     title: string;
     version: string;
     description?: string;
   };
+  servers?: Array<{
+    url: string;
+    description?: string;
+  }>;
   paths: Record<string, PathItem>;
   components?: {
     schemas?: Record<string, any>;
@@ -182,4 +187,99 @@ export interface RegressionSummary {
   improvedTests: number;
   unchangedTests: number;
   details: RegressionResult[];
+}
+
+// Code to OpenAPI Generator Types
+export interface ApiStructure {
+  name: string;
+  description?: string;
+  version?: string;
+  basePath?: string;
+  endpoints: EndpointInfo[];
+  models: ModelInfo[];
+  securitySchemes?: SecurityScheme[];
+}
+
+export interface EndpointInfo {
+  path: string;
+  method: string;
+  summary?: string;
+  description?: string;
+  parameters?: ParameterInfo[];
+  requestBody?: RequestBodyInfo;
+  responses?: ResponseInfo[];
+  security?: SecurityRequirement[];
+  tags?: string[];
+}
+
+export interface ParameterInfo {
+  name: string;
+  location: 'path' | 'query' | 'header' | 'cookie';
+  description?: string;
+  required?: boolean;
+  schema?: SchemaInfo;
+}
+
+export interface RequestBodyInfo {
+  description?: string;
+  required?: boolean;
+  contentType?: string;
+  schema?: SchemaInfo;
+}
+
+export interface ResponseInfo {
+  statusCode: string | number;
+  description?: string;
+  contentType?: string;
+  schema?: SchemaInfo;
+}
+
+export interface ModelInfo {
+  name: string;
+  description?: string;
+  properties: PropertyInfo[];
+  required?: string[];
+}
+
+export interface PropertyInfo {
+  name: string;
+  type: string;
+  description?: string;
+  format?: string;
+  enum?: any[];
+  items?: SchemaInfo;
+  properties?: PropertyInfo[];
+  required?: boolean;
+}
+
+export interface SchemaInfo {
+  type?: string;
+  format?: string;
+  reference?: string;
+  description?: string;
+  enum?: any[];
+  items?: SchemaInfo;
+  properties?: PropertyInfo[];
+  required?: string[];
+}
+
+export interface SecurityScheme {
+  name: string;
+  type: 'apiKey' | 'http' | 'oauth2' | 'openIdConnect';
+  description?: string;
+  location?: 'query' | 'header' | 'cookie';
+  scheme?: string;
+}
+
+export interface SecurityRequirement {
+  name: string;
+  scopes?: string[];
+}
+
+export interface CodebaseAnalysisResult {
+  detectedLanguage: string;
+  detectedFramework: string;
+  apiStructure: ApiStructure;
+  parserUsed: string;
+  warnings?: string[];
 }

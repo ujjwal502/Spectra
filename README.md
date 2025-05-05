@@ -13,6 +13,7 @@ Spectra is an advanced API testing automation tool that uses AI to generate, man
 - 🚀 **Dual Execution Engines**: Run tests directly via REST client or through Postman/Newman
 - 📁 **File Upload Support**: Test APIs that require file uploads with multipart/form-data
 - 📈 **Interactive Dashboard**: Visualize test results and regression data through a web interface
+- 🔍 **Code-to-OpenAPI**: Generate OpenAPI specifications directly from backend code
 
 ## Documentation
 
@@ -69,6 +70,27 @@ This will:
 1. Parse the OpenAPI specification
 2. Generate Gherkin feature files for each endpoint
 3. Save them to the specified output directory
+
+### Generation from Backend Code
+
+If you don't have an OpenAPI specification for your API, Spectra can generate one directly from your backend code:
+
+```bash
+# Generate OpenAPI spec from backend code
+npm run generate:spec ./path/to/backend-code ./output-schema.json
+```
+
+This will:
+1. Analyze your backend code to detect the language and framework
+2. Extract API endpoints, parameters, and data models
+3. Use AI to enhance descriptions and schemas
+4. Generate a complete OpenAPI specification
+
+Supported frameworks:
+- Express.js (Node.js)
+- Spring Boot (Java) - Coming soon
+- Django/Flask (Python) - Coming soon
+- Ktor (Kotlin) - Coming soon
 
 ### Running Tests
 
@@ -154,6 +176,51 @@ When running with the AI mode enabled:
 - **Smarter Test Scenarios**: More comprehensive test cases covering edge cases
 - **Enhanced Mock Data**: More realistic, contextually appropriate test data
 - **Improved Validation**: Better assertions based on expected behavior
+
+## OpenAI Model Selection and Cost Efficiency
+
+Spectra allows you to configure which OpenAI model to use for different tasks, balancing cost and quality:
+
+### Recommended Models
+
+- **GPT-3.5 Turbo**: Cost-efficient option with good general capabilities
+  - Great for most test scenarios and mock data generation
+  - Much lower cost per token than GPT-4 models
+  - Faster response times
+  
+- **GPT-3.5 Turbo 16K**: For larger context scenarios
+  - Handles more complex API specifications
+  - Useful when generating tests for many endpoints at once
+  
+- **GPT-4 / GPT-4 Turbo**: Highest quality but more expensive
+  - Best reasoning capabilities for complex APIs
+  - More accurate for edge cases and unusual scenarios
+  - Recommended when precision is critical
+
+### Configuration
+
+Create a `.env` file with your OpenAI settings:
+
+```
+# OpenAI API
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Model Selection
+OPENAI_MODEL=gpt-3.5-turbo      # Standard model for most tasks
+OPENAI_LARGE_MODEL=gpt-3.5-turbo-16k  # For large API specs
+
+# Optional settings
+OPENAI_TIMEOUT=30000  # Timeout in milliseconds
+```
+
+### Cost-Efficiency Recommendations
+
+1. **Start with GPT-3.5**: Begin your testing with the cost-efficient GPT-3.5 Turbo model
+2. **Selective Model Use**: Reserve GPT-4 for complex APIs or when you need higher quality
+3. **Batch Processing**: Generate tests for multiple endpoints in one operation
+4. **Cache Results**: Reuse generated tests when the API hasn't changed
+
+This approach provides a good balance between cost and quality for most API testing scenarios.
 
 ## Advanced Features
 

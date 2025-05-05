@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { TestEngine, RunnerType } from './core/engine';
 import { TestResult } from './types';
 import { RegressionService } from './services/regressionService';
+import { SpecGenerator } from './generators/specGenerator';
 
 dotenv.config();
 
@@ -85,6 +86,7 @@ async function main(): Promise<void> {
 
     const engine = new TestEngine(engineOptions);
     const regressionService = new RegressionService();
+    const specGenerator = new SpecGenerator();
 
     const processedArgs = args.filter(
       (arg) => arg !== '--ai' && arg !== '-a' && arg !== '--postman' && arg !== '-p',
@@ -104,6 +106,40 @@ async function main(): Promise<void> {
     }
 
     switch (command) {
+      case 'generate-spec': {
+        const sourcePath = processedArgs[1];
+        const outputPath = processedArgs[2] || 'api-schema.json';
+
+        if (!sourcePath) {
+          console.error('❌ Source path is required for generate-spec command');
+          console.log('Usage: npm run dev generate-spec <source-path> [output-path]');
+          process.exit(1);
+        }
+
+        console.log(`🔍 Analyzing codebase in ${sourcePath}...`);
+        
+        try {
+          // Generate OpenAPI spec directly from the source code
+          console.log(`\n🔄 Generating OpenAPI spec from ${sourcePath}...`);
+          const openApiSpec = await specGenerator.generateFromCode(sourcePath);
+          
+          // Save OpenAPI spec to file
+          fs.writeFileSync(outputPath, JSON.stringify(openApiSpec, null, 2), 'utf8');
+          
+          console.log(`✅ OpenAPI spec saved to ${outputPath}`);
+          console.log(`\n💡 You can now use this spec with Spectra:`);
+          console.log(`  npm run dev generate --ai ${outputPath} ./features`);
+          console.log(`  npm run dev run --ai ${outputPath} http://your-api-url ./results.json`);
+        } catch (error) {
+          console.error(`❌ Failed to generate OpenAPI spec: ${error instanceof Error ? error.message : error}`);
+          if (error instanceof Error && error.stack) {
+            console.error(error.stack);
+          }
+          process.exit(1);
+        }
+        break;
+      }
+
       case 'generate': {
         const schemaPath = processedArgs[1] || 'api-schema.json';
         const outputDir = processedArgs[2] || 'features';
@@ -222,6 +258,7 @@ async function main(): Promise<void> {
 API Testing Agent
 
 Usage:
+  npm run dev generate-spec <source-path> [output-path]
   npm run dev generate [--ai] [--postman] <schema-path> <output-dir>
   npm run dev run [--ai] [--postman] <schema-path> <base-url> <results-path>
   npm run dev regression:baseline [--ai] [--postman] <schema-path> <base-url> <baseline-path>
@@ -232,6 +269,7 @@ Options:
   --postman, -p     Use Postman/Newman runner instead of direct REST client
 
 Examples:
+  npm run dev generate-spec ./my-backend-code ./schemas/generated-api.json
   npm run dev generate --ai ./schemas/petstore.json ./features
   npm run dev run --ai --postman ./schemas/petstore.json https://petstore.swagger.io/v2 ./results.json
   npm run dev regression:baseline --ai ./schemas/petstore.json https://petstore.swagger.io/v2 ./baseline.json

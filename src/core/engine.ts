@@ -102,7 +102,8 @@ export class TestEngine {
 
     for (const { path, method, operation } of endpoints) {
       const feature = await this.gherkinGenerator.generateFeature(path, method, operation);
-      const featureId = `${method}_${path.replace(/\//g, '_')}`;
+
+      const featureId = `${method}_${path.replace(/\//g, '_').replace(/[*?<>|:"\\]/g, '_')}`;
       this.features.set(featureId, feature);
 
       const context = `This is for the ${method.toUpperCase()} ${path} endpoint. ${
@@ -146,7 +147,9 @@ export class TestEngine {
 
     for (const [id, feature] of this.features.entries()) {
       const featureContent = this.gherkinGenerator.featureToString(feature);
-      const filePath = path.join(outputDir, `${id}.feature`);
+      // Sanitize filename by replacing invalid characters with underscores
+      const sanitizedId = id.replace(/[*?<>|:"\\\/]/g, '_');
+      const filePath = path.join(outputDir, `${sanitizedId}.feature`);
       fs.writeFileSync(filePath, featureContent, 'utf8');
     }
   }
