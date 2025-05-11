@@ -129,8 +129,9 @@ export interface Config {
   openai: {
     apiKey: string;
     model: string;
-    maxTokens: number;
+    maxCompletionTokens: number;
     temperature: number;
+    defaultOnly: boolean;
   };
   gherkin: {
     templates: {
@@ -282,4 +283,34 @@ export interface CodebaseAnalysisResult {
   apiStructure: ApiStructure;
   parserUsed: string;
   warnings?: string[];
+}
+
+/**
+ * Configuration options for the SpecGenerator
+ */
+export interface SpecGeneratorOptions {
+  /**
+   * Whether to preserve API prefix paths like /api in routes
+   */
+  preserveApiPrefix: boolean;
+
+  /**
+   * Whether to group endpoints by resource type
+   */
+  groupByResource: boolean;
+
+  /**
+   * Whether to enhance parameter names with resource context
+   */
+  enhanceParameterNames: boolean;
+
+  /**
+   * Whether to extract JSDoc comments for route documentation
+   */
+  extractJSDocComments: boolean;
+
+  /**
+   * Base URL for the API server
+   */
+  baseUrl: string;
 }

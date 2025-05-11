@@ -6,7 +6,7 @@
  *  1. Create test files for upload
  *  2. Define file upload metadata using the FileUpload interface
  *  3. Configure test cases with file uploads
- *  4. Execute tests using the PostmanRunner
+ *  4. Execute tests using the CurlRunner
  *
  * To run this example:
  *  npm run example:file-upload
@@ -81,9 +81,9 @@ async function runFileUploadExample() {
     files: [fileUpload],
   };
 
-  const engine = new TestEngine({ runnerType: RunnerType.POSTMAN });
+  const engine = new TestEngine();
 
-  console.log('Running file upload test...');
+  console.log('Running file upload test with cURL...');
 
   const apiUrl = 'https://httpbin.org';
 
@@ -107,9 +107,12 @@ async function runFileUploadExample() {
       }
 
       if (result.response) {
-        console.log(`Response: ${JSON.stringify(result.response, null, 2).substring(0, 200)}...`);
+        console.log(`Response status: ${result.response.status}`);
+        console.log(
+          `Response: ${JSON.stringify(result.response.body, null, 2).substring(0, 200)}...`,
+        );
 
-        if (result.response.files && result.response.files.file) {
+        if (result.response.body?.files?.file) {
           console.log('✅ File upload successful!');
         }
       }

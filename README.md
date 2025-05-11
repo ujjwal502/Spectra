@@ -81,12 +81,14 @@ npm run generate:spec ./path/to/backend-code ./output-schema.json
 ```
 
 This will:
+
 1. Analyze your backend code to detect the language and framework
 2. Extract API endpoints, parameters, and data models
 3. Use AI to enhance descriptions and schemas
 4. Generate a complete OpenAPI specification
 
 Supported frameworks:
+
 - Express.js (Node.js)
 - Spring Boot (Java) - Coming soon
 - Django/Flask (Python) - Coming soon
@@ -156,18 +158,14 @@ Then open your browser to `http://localhost:5173` to access the dashboard.
 
 ## Runner Types
 
-### REST Client
+### cURL
 
-- Direct execution using Axios
-- Lightweight and fast execution
-- No additional dependencies required
-
-### Postman/Newman
-
-- Executes tests via Newman (Postman CLI)
-- Supports Postman Collection format
-- Can leverage Postman test scripts
-- Offers compatibility with existing Postman workflows
+- Universal, license-free execution using cURL
+- Available on virtually all operating systems
+- No additional dependencies or licenses required
+- Transparent, debuggable commands
+- Supports all API request types including file uploads
+- Commands can be saved as shell scripts for manual execution
 
 ## AI-Enhanced Features
 
@@ -187,11 +185,9 @@ Spectra allows you to configure which OpenAI model to use for different tasks, b
   - Great for most test scenarios and mock data generation
   - Much lower cost per token than GPT-4 models
   - Faster response times
-  
 - **GPT-3.5 Turbo 16K**: For larger context scenarios
   - Handles more complex API specifications
   - Useful when generating tests for many endpoints at once
-  
 - **GPT-4 / GPT-4 Turbo**: Highest quality but more expensive
   - Best reasoning capabilities for complex APIs
   - More accurate for edge cases and unusual scenarios

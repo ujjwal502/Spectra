@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { resolveReferences } from '../src/utils/schema';
 import { RegressionService } from '../src/services/regressionService';
+import { HtmlReportService } from '../src/services/htmlReportService';
 
 // Debug utility to inspect nested objects safely
 function safeStringify(obj: any, depth = 2) {
@@ -117,7 +118,6 @@ async function runBackendTests() {
 
     const engine = new TestEngine({
       useAI, // Use AI if API key is present
-      runnerType: RunnerType.POSTMAN,
       debug: true,
     });
 
@@ -511,6 +511,12 @@ async function runBackendTests() {
     }));
     fs.writeFileSync(resultsPath, JSON.stringify(resultsArray, null, 2), 'utf8');
     console.log(`✅ Test results saved to ${resultsPath}`);
+
+    // Generate HTML reports in the backend directory
+    console.log('🔍 Generating HTML reports...');
+    const htmlReportService = new HtmlReportService();
+    htmlReportService.generateTestReport(results, path.join(__dirname, 'backend'));
+    console.log('✅ HTML reports generated in spectra-reports directory');
 
     // Handle regression testing if requested
     if (isRegressionMode || shouldSaveBaseline) {

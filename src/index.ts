@@ -2,9 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import { TestEngine, RunnerType } from './core/engine';
-import { TestResult } from './types';
+import { TestCase, TestResult, SpecGeneratorOptions } from './types';
 import { RegressionService } from './services/regressionService';
 import { SpecGenerator } from './generators/specGenerator';
+import { HtmlReportService } from './services/htmlReportService';
 
 dotenv.config();
 
@@ -67,43 +68,46 @@ function saveTestResults(results: Map<string, TestResult>, outputPath: string): 
 }
 
 /**
+ * Generate HTML reports for test results in the project directory
+ * @param results Test results
+ * @param outputDir Directory where the project being tested is located
+ */
+function generateHtmlReports(results: Map<string, TestResult>, outputDir: string): void {
+  const htmlReportService = new HtmlReportService();
+  htmlReportService.generateTestReport(results, outputDir);
+}
+
+/**
  * Run the API testing agent
  */
 async function main(): Promise<void> {
+  // Move args declaration outside the try block
+  const args = process.argv.slice(2);
+
   try {
-    const args = process.argv.slice(2);
     const command = args[0];
 
-    const useAI = args.includes('--ai') || args.includes('-a');
-
-    const usePostman = args.includes('--postman') || args.includes('-p');
-    const runnerType = usePostman ? RunnerType.POSTMAN : RunnerType.REST;
+    // Set AI to always be enabled if OPENAI_API_KEY is present
+    const useAI = process.env.OPENAI_API_KEY ? true : false;
 
     const engineOptions = {
       useAI,
-      runnerType,
     };
 
     const engine = new TestEngine(engineOptions);
     const regressionService = new RegressionService();
-    const specGenerator = new SpecGenerator();
 
-    const processedArgs = args.filter(
-      (arg) => arg !== '--ai' && arg !== '-a' && arg !== '--postman' && arg !== '-p',
-    );
+    // Remove AI flag filtering
+    const processedArgs = args;
 
     if (useAI) {
-      console.log('🧠 AI-powered test generation enabled');
-      if (!process.env.OPENAI_API_KEY) {
-        console.warn(
-          '⚠️  OPENAI_API_KEY not found in environment variables. AI features may not work.',
-        );
-      }
+      console.log('🧠 AI-powered features enabled');
+    } else {
+      console.error('⚠️ AI features disabled. Please set OPENAI_API_KEY in your environment ');
+      process.exit(1);
     }
 
-    if (usePostman) {
-      console.log('🚀 Using Postman/Newman runner for test execution');
-    }
+    console.log('🚀 Using cURL runner for test execution');
 
     switch (command) {
       case 'generate-spec': {
@@ -112,26 +116,77 @@ async function main(): Promise<void> {
 
         if (!sourcePath) {
           console.error('❌ Source path is required for generate-spec command');
-          console.log('Usage: npm run dev generate-spec <source-path> [output-path]');
+          console.log('Usage: npm run dev generate-spec <source-path> [output-path] [options]');
+          console.log('\nOptions:');
+          console.log('  --no-group       Disable grouping endpoints by resource');
+          console.log('  --no-prefix      Disable API prefix preservation');
+          console.log('  --no-jsdoc       Disable JSDoc extraction');
+          console.log('  --base-url=URL   Set the API base URL (default: http://localhost:3000)');
+          console.log('  --use-ai         Enable AI enhancement (requires OPENAI_API_KEY)');
           process.exit(1);
         }
 
         console.log(`🔍 Analyzing codebase in ${sourcePath}...`);
-        
+
         try {
-          // Generate OpenAPI spec directly from the source code
+          // Parse options
+          const options: Partial<SpecGeneratorOptions> = {};
+
+          // Set defaults
+          options.groupByResource = true;
+          options.preserveApiPrefix = true;
+          options.extractJSDocComments = true;
+          options.baseUrl = 'http://localhost:3000';
+
+          // Process command line options
+          processedArgs.forEach((arg) => {
+            if (arg === '--no-group') {
+              options.groupByResource = false;
+            } else if (arg === '--no-prefix') {
+              options.preserveApiPrefix = false;
+            } else if (arg === '--no-jsdoc') {
+              options.extractJSDocComments = false;
+            } else if (arg.startsWith('--base-url=')) {
+              options.baseUrl = arg.split('=')[1];
+            }
+          });
+
+          // Log the configuration
+          console.log('\n🛠️ Configuration:');
+          console.log(`  Group by resource: ${options.groupByResource ? 'enabled' : 'disabled'}`);
+          console.log(
+            `  API prefix preservation: ${options.preserveApiPrefix ? 'enabled' : 'disabled'}`,
+          );
+          console.log(
+            `  JSDoc extraction: ${options.extractJSDocComments ? 'enabled' : 'disabled'}`,
+          );
+          if (process.env.OPENAI_API_KEY) {
+            console.log('  AI enhancement: enabled (using OpenAI API)');
+            console.log('  Enhanced AI schema generation: enabled');
+          } else {
+            console.log('  AI enhancement: disabled (no OpenAI API key found)');
+            console.log('  ⚠️ For best results, set OPENAI_API_KEY in your environment');
+          }
+          console.log(`  Base URL: ${options.baseUrl}`);
+
+          // Generate OpenAPI spec directly from the source code with options
           console.log(`\n🔄 Generating OpenAPI spec from ${sourcePath}...`);
-          const openApiSpec = await specGenerator.generateFromCode(sourcePath);
-          
+
+          // Create SpecGenerator with options
+          const specGeneratorWithOptions = new SpecGenerator(options);
+          const openApiSpec = await specGeneratorWithOptions.generateFromCode(sourcePath);
+
           // Save OpenAPI spec to file
           fs.writeFileSync(outputPath, JSON.stringify(openApiSpec, null, 2), 'utf8');
-          
+
           console.log(`✅ OpenAPI spec saved to ${outputPath}`);
           console.log(`\n💡 You can now use this spec with Spectra:`);
           console.log(`  npm run dev generate --ai ${outputPath} ./features`);
           console.log(`  npm run dev run --ai ${outputPath} http://your-api-url ./results.json`);
         } catch (error) {
-          console.error(`❌ Failed to generate OpenAPI spec: ${error instanceof Error ? error.message : error}`);
+          console.error(
+            `❌ Failed to generate OpenAPI spec: ${error instanceof Error ? error.message : error}`,
+          );
           if (error instanceof Error && error.stack) {
             console.error(error.stack);
           }
@@ -161,6 +216,7 @@ async function main(): Promise<void> {
         const schemaPath = processedArgs[1] || 'api-schema.json';
         const baseUrl = processedArgs[2] || process.env.API_BASE_URL || 'http://localhost:3000';
         const resultsPath = processedArgs[3] || 'test-results.json';
+        const projectDir = path.dirname(schemaPath);
 
         console.log(`Loading API schema from ${schemaPath}...`);
         await engine.loadApiSchema(schemaPath);
@@ -175,6 +231,9 @@ async function main(): Promise<void> {
 
         saveTestResults(results, resultsPath);
         console.log(`Test results saved to ${resultsPath}`);
+
+        // Generate HTML reports
+        generateHtmlReports(results, projectDir);
         break;
       }
 
@@ -183,6 +242,7 @@ async function main(): Promise<void> {
         const baseUrl = processedArgs[2] || process.env.API_BASE_URL || 'http://localhost:3000';
         const baselinePath = processedArgs[3] || 'regression-baseline.json';
         const resultsPath = processedArgs[4] || 'test-results.json';
+        const projectDir = path.dirname(schemaPath);
 
         console.log(`Loading API schema from ${schemaPath}...`);
         await engine.loadApiSchema(schemaPath);
@@ -198,35 +258,34 @@ async function main(): Promise<void> {
         saveTestResults(currentResults, resultsPath);
         console.log(`Test results saved to ${resultsPath}`);
 
+        // Generate HTML reports
+        generateHtmlReports(currentResults, projectDir);
+
         // Load baseline for regression comparison
         console.log(`Loading regression baseline from ${baselinePath}...`);
         const baselineResults = regressionService.loadBaseline(baselinePath);
 
         if (!baselineResults) {
-          console.log(`⚠️  No baseline found at ${baselinePath}. Run 'regression:baseline' first.`);
-          console.log(
-            `   You can create a baseline with: npm run dev regression:baseline ${schemaPath} ${baseUrl} ${baselinePath}`,
-          );
+          console.log(`⚠️ No baseline found at ${baselinePath}`);
           break;
         }
 
-        // Compare results and show regression analysis
-        console.log('Comparing with baseline...');
+        console.log('Comparing current results with baseline...');
         const regressionSummary = regressionService.compareResults(baselineResults, currentResults);
 
         console.log(regressionService.formatRegressionResults(regressionSummary));
 
-        // Save regression results
-        const regressionResultsPath = 'regression-results.json';
-        fs.writeFileSync(regressionResultsPath, JSON.stringify(regressionSummary, null, 2), 'utf8');
-        console.log(`Regression results saved to ${regressionResultsPath}`);
+        // Save regression summary
+        const regressionSummaryPath = path.join(
+          path.dirname(resultsPath),
+          'regression-results.json',
+        );
+        fs.writeFileSync(regressionSummaryPath, JSON.stringify(regressionSummary, null, 2), 'utf8');
+        console.log(`Regression results saved to ${regressionSummaryPath}`);
 
         // Exit with error code if regressions found
         if (regressionSummary.regressedTests > 0) {
-          console.log(`❌ ${regressionSummary.regressedTests} regressions detected`);
           process.exit(1);
-        } else {
-          console.log('✅ No regressions detected');
         }
         break;
       }
@@ -235,6 +294,7 @@ async function main(): Promise<void> {
         const schemaPath = processedArgs[1] || 'api-schema.json';
         const baseUrl = processedArgs[2] || process.env.API_BASE_URL || 'http://localhost:3000';
         const baselinePath = processedArgs[3] || 'regression-baseline.json';
+        const projectDir = path.dirname(schemaPath);
 
         console.log(`Loading API schema from ${schemaPath}...`);
         await engine.loadApiSchema(schemaPath);
@@ -246,6 +306,9 @@ async function main(): Promise<void> {
         const results = await engine.executeTests(baseUrl);
 
         console.log(formatTestResults(results));
+
+        // Generate HTML reports
+        generateHtmlReports(results, projectDir);
 
         // Save as regression baseline
         regressionService.saveBaseline(results, baselinePath);
@@ -259,26 +322,48 @@ API Testing Agent
 
 Usage:
   npm run dev generate-spec <source-path> [output-path]
-  npm run dev generate [--ai] [--postman] <schema-path> <output-dir>
-  npm run dev run [--ai] [--postman] <schema-path> <base-url> <results-path>
-  npm run dev regression:baseline [--ai] [--postman] <schema-path> <base-url> <baseline-path>
-  npm run dev regression:run [--ai] [--postman] <schema-path> <base-url> <baseline-path> <results-path>
+  npm run dev generate <schema-path> <output-dir>
+  npm run dev run <schema-path> <base-url> <results-path>
+  npm run dev regression:baseline <schema-path> <base-url> <baseline-path>
+  npm run dev regression:run <schema-path> <base-url> <baseline-path> <results-path>
 
 Options:
-  --ai, -a          Enable AI-powered test generation
-  --postman, -p     Use Postman/Newman runner instead of direct REST client
+  --no-group       Disable grouping endpoints by resource
+  --no-prefix      Disable API prefix preservation
+  --no-jsdoc       Disable JSDoc extraction
+  --base-url=URL   Set the API base URL (default: http://localhost:3000)
+
+Note: AI-powered schema enhancement is automatically enabled when OPENAI_API_KEY is set in your environment
 
 Examples:
   npm run dev generate-spec ./my-backend-code ./schemas/generated-api.json
-  npm run dev generate --ai ./schemas/petstore.json ./features
-  npm run dev run --ai --postman ./schemas/petstore.json https://petstore.swagger.io/v2 ./results.json
-  npm run dev regression:baseline --ai ./schemas/petstore.json https://petstore.swagger.io/v2 ./baseline.json
-  npm run dev regression:run --ai ./schemas/petstore.json https://petstore.swagger.io/v2 ./baseline.json ./results.json
+  npm run dev generate ./schemas/petstore.json ./features
+  npm run dev run ./schemas/petstore.json https://petstore.swagger.io/v2 ./results.json
+  npm run dev regression:baseline ./schemas/petstore.json https://petstore.swagger.io/v2 ./baseline.json
+  npm run dev regression:run ./schemas/petstore.json https://petstore.swagger.io/v2 ./baseline.json ./results.json
         `);
         break;
     }
-  } catch (error) {
-    console.error('Error:', error);
+  } catch (error: any) {
+    // Get a meaningful action description based on the current context
+    let actionDesc = 'complete operation';
+
+    // Access args directly since it's now in scope
+    if (args && args.length > 0) {
+      actionDesc = args[0] || 'run command';
+    }
+
+    console.error(`❌ Failed to ${actionDesc}: ${error.message}`);
+
+    // Add additional instructions for common issues
+    if (error.message.includes('parse') || error.message.includes('JSON')) {
+      console.log('\n💡 This appears to be an issue with parsing the OpenAI response.');
+      console.log('You can try the following:');
+      console.log('1. Run the command again (sometimes OpenAI returns malformed responses)');
+      console.log('2. Check your OpenAI API key and quota');
+      console.log('3. If you have a RAW output file, examine it for JSON formatting issues');
+    }
+
     process.exit(1);
   }
 }

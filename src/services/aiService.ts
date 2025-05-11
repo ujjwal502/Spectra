@@ -1,6 +1,15 @@
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
-import { Operation, EndpointInfo, ModelInfo, ApiStructure, CodebaseAnalysisResult } from '../types';
+import {
+  Operation,
+  EndpointInfo,
+  ModelInfo,
+  ApiStructure,
+  CodebaseAnalysisResult,
+  ResponseInfo,
+  PropertyInfo,
+  ParameterInfo,
+} from '../types';
 
 dotenv.config();
 
@@ -9,195 +18,345 @@ export class AIService {
   private defaultModel: string;
   private largeContextModel: string;
   private defaultTimeout: number;
+  private isO4Model: boolean;
 
   constructor() {
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
     });
-    
+
     // Use more cost-efficient models by default
     // GPT-4 models have better reasoning but are more expensive
     // GPT-3.5 models are more cost-efficient but may have lower quality
     this.defaultModel = process.env.OPENAI_MODEL || 'gpt-3.5-turbo'; // More cost-effective
     this.largeContextModel = process.env.OPENAI_LARGE_MODEL || 'gpt-3.5-turbo-16k'; // For large contexts
     this.defaultTimeout = parseInt(process.env.OPENAI_TIMEOUT || '30000', 10); // 30 seconds default
+
+    // Check if using an o4 model that requires special handling
+    this.isO4Model = this.defaultModel.includes('o4-') || this.largeContextModel.includes('o4-');
+
+    if (this.isO4Model) {
+      console.log('Using o4 model - adjusting parameters for compatibility');
+    }
   }
 
   /**
    * Generate a complete API specification using AI based on codebase analysis
    * @param analysisResult Result of codebase analysis with detected language, framework, etc.
    * @returns AI-enhanced full API structure
+   * @throws Error if specification generation fails
    */
   async generateFullApiSpec(analysisResult: CodebaseAnalysisResult): Promise<ApiStructure> {
     try {
       console.log('Using AI to generate complete API specification...');
-      
+      console.log('Enhanced AI mode enabled for improved schema generation');
+
       // Extract basic info from analysis result
       const { detectedLanguage, detectedFramework, apiStructure } = analysisResult;
-      
-      // Check if the apiStructure already has sufficient detail
-      const hasDetailedEndpoints = apiStructure.endpoints.length > 0 && 
-        apiStructure.endpoints.some(e => e.description && e.description.length > 30);
-      
-      if (hasDetailedEndpoints) {
-        console.log('API structure already has detailed endpoints. Enhancing existing endpoints...');
-        return this.enhanceExistingApiStructure(apiStructure, detectedLanguage, detectedFramework);
-      }
-      
-      // If not, use AI to generate a more complete spec
-      console.log('Generating complete API specification from scratch...');
-      const prompt = this.buildFullApiSpecPrompt(analysisResult);
-      
-      // Use large context model for full spec generation
-      const response = await Promise.race([
-        this.openai.chat.completions.create({
-          model: this.largeContextModel,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an API specification expert who can analyze codebases and generate detailed OpenAPI specifications.',
-            },
-            { role: 'user', content: prompt },
-          ],
-          max_tokens: 4000,
-          temperature: 0.2,
-        }),
-        // Add timeout
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error(`OpenAI API timeout after ${this.defaultTimeout/1000} seconds`)), this.defaultTimeout)
-        )
-      ]);
 
-      const resultText = response.choices[0]?.message.content || '';
-      
+      // Check if the apiStructure already has sufficient detail
+      const hasDetailedEndpoints =
+        apiStructure.endpoints.length > 0 &&
+        apiStructure.endpoints.some((e) => e.description && e.description.length > 30);
+
+      if (hasDetailedEndpoints) {
+        console.log(
+          'API structure already has detailed endpoints. Enhancing existing structure...',
+        );
+      } else {
+        console.log('Generating complete API structure from detected routes...');
+      }
+
+      // Build the prompt with core code information - let OpenAI determine the domain
+      const prompt = this.buildFullApiSpecPrompt(analysisResult);
+
+      // Log the prompt length for debugging
+      console.log(`Using prompt with ${prompt.length} characters`);
+
+      // Call the OpenAI API
+      const apiResponse = await this.openai.chat.completions.create({
+        model: this.largeContextModel,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are an expert API developer specializing in OpenAPI specifications. Your task is to analyze code and generate detailed, accurate, and complete API specifications that follow domain-specific best practices.\n\n' +
+              'CRITICAL OUTPUT INSTRUCTIONS:\n' +
+              '1. You MUST return ONLY a raw JSON object.\n' +
+              '2. DO NOT include any explanation text before or after the JSON.\n' +
+              '3. DO NOT use markdown formatting like ```json or ``` backticks around your response.\n' +
+              '4. Your entire response must be a valid, parseable JSON object only.\n' +
+              '5. Make sure the JSON is complete and not truncated.\n' +
+              '6. Check that all JSON objects and arrays are properly closed.\n' +
+              '7. Do not include comments in the JSON.\n' +
+              '8. All property names must be in double quotes.\n' +
+              '9. Start your response with "{" and end with "}" with NO OTHER TEXT.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        max_completion_tokens: 4000,
+        ...(this.isO4Model ? {} : { temperature: 0.2 }),
+      });
+
+      // Extract the full API structure from the response
+      const response = apiResponse.choices[0]?.message?.content;
+      if (!response) {
+        throw new Error('Empty response from OpenAI API');
+      }
+
       try {
-        // Extract and parse the AI-generated API structure
-        const generatedApiStructure = this.extractAndParseJSON(resultText);
-        
-        // Merge with original structure to ensure we keep critical information
-        const mergedStructure: ApiStructure = {
-          name: generatedApiStructure.name || apiStructure.name,
-          description: generatedApiStructure.description || apiStructure.description,
-          version: generatedApiStructure.version || apiStructure.version || '1.0.0',
-          basePath: generatedApiStructure.basePath || apiStructure.basePath,
-          endpoints: generatedApiStructure.endpoints || apiStructure.endpoints,
-          models: generatedApiStructure.models || apiStructure.models,
-        };
-        
-        console.log(`AI successfully generated API spec with ${mergedStructure.endpoints.length} endpoints`);
-        return mergedStructure;
-      } catch (parseError) {
-        console.error('Failed to parse AI-generated API structure:', parseError);
-        
-        // Fallback to enhancing the existing structure
-        console.log('Falling back to enhancing existing endpoints...');
-        return this.enhanceExistingApiStructure(apiStructure, detectedLanguage, detectedFramework);
+        // Try to parse the JSON response
+        const result = this.extractAndParseJSON(response);
+
+        // Validate that it has the expected structure
+        if (!result || typeof result !== 'object') {
+          throw new Error('Invalid API structure: response is not a valid object');
+        }
+
+        // Validate that it has an endpoints array
+        if (!result.endpoints || !Array.isArray(result.endpoints)) {
+          throw new Error('Invalid API structure: missing endpoints array');
+        }
+
+        console.log(`Generated API spec with ${result.endpoints.length} endpoints`);
+        return result;
+      } catch (error: any) {
+        console.error('Failed to parse OpenAI response:', error.message);
+        console.log('Using fallback recovery to create a minimal valid API structure');
+
+        // Create a minimal valid structure using the existing information
+        return this.createFallbackApiStructure(apiStructure, response);
       }
     } catch (error) {
-      console.error('Error generating full API spec with AI:', 
-        error instanceof Error ? error.message : error);
-      // Return the original structure if AI enhancement fails
-      console.log('Returning original API structure due to AI error');
-      return analysisResult.apiStructure;
+      // Log detailed error information
+      console.error('API specification generation failed:', error);
+
+      if (error instanceof Error) {
+        console.error('Error details:', error.message);
+        if (error.stack) {
+          console.error('Stack trace:', error.stack);
+        }
+      }
+
+      // Propagate the error instead of returning a fallback
+      throw new Error(
+        `Failed to generate API specification: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
     }
   }
 
   /**
-   * Enhance an existing API structure with better descriptions and details
-   * @param apiStructure Original API structure
-   * @param language Programming language 
-   * @param framework Framework name
-   * @returns Enhanced API structure
+   * Create a fallback API structure when parsing fails
+   * @param existingStructure The existing API structure from analysis
+   * @param openaiResponse The raw response from OpenAI that failed to parse
+   * @returns A valid API structure using information from both sources
    */
-  private async enhanceExistingApiStructure(
-    apiStructure: ApiStructure,
-    language: string,
-    framework: string
-  ): Promise<ApiStructure> {
-    // Clone the structure to avoid modifying the original
-    const enhancedStructure = JSON.parse(JSON.stringify(apiStructure)) as ApiStructure;
-    
-    console.log(`Enhancing ${enhancedStructure.endpoints.length} endpoints with AI...`);
-    
-    // Process endpoints in parallel batches to speed up
-    const batchSize = 3; // Process 3 endpoints at a time
-    const totalEndpoints = enhancedStructure.endpoints.length;
-    
-    for (let i = 0; i < totalEndpoints; i += batchSize) {
-      const batch = enhancedStructure.endpoints.slice(i, i + batchSize);
-      const batchPromises = batch.map(endpoint => 
-        this.enhanceEndpoint(endpoint, language, framework)
-          .catch(error => {
-            console.error(`Error enhancing endpoint ${endpoint.path}:`, error);
-            return endpoint; // Return original on error
-          })
-      );
-      
-      // Wait for all endpoints in the batch to be processed
-      const enhancedBatch = await Promise.all(batchPromises);
-      
-      // Update the endpoints in the structure
-      for (let j = 0; j < enhancedBatch.length; j++) {
-        enhancedStructure.endpoints[i + j] = enhancedBatch[j];
+  private createFallbackApiStructure(
+    existingStructure: ApiStructure,
+    openaiResponse: string,
+  ): ApiStructure {
+    console.log('Creating fallback API structure from existing data and partial OpenAI response');
+
+    try {
+      // Start with the existing structure
+      const fallbackStructure: ApiStructure = {
+        name: existingStructure.name || 'API',
+        description: existingStructure.description || 'Generated API specification',
+        version: '1.0.0',
+        basePath: existingStructure.basePath || '/api',
+        endpoints: [],
+        models: [],
+      };
+
+      // Try to extract the API name from the OpenAI response
+      const nameMatch = openaiResponse.match(/"name"\s*:\s*"([^"]+)"/);
+      if (nameMatch && nameMatch[1]) {
+        fallbackStructure.name = nameMatch[1];
       }
-      
-      console.log(`Enhanced ${Math.min(i + batchSize, totalEndpoints)}/${totalEndpoints} endpoints`);
-    }
-    
-    // Similarly enhance models in parallel batches
-    console.log(`Enhancing ${enhancedStructure.models.length} models with AI...`);
-    
-    const totalModels = enhancedStructure.models.length;
-    
-    for (let i = 0; i < totalModels; i += batchSize) {
-      const batch = enhancedStructure.models.slice(i, i + batchSize);
-      const batchPromises = batch.map(model => 
-        this.enhanceModel(model, language, framework)
-          .catch(error => {
-            console.error(`Error enhancing model ${model.name}:`, error);
-            return model; // Return original on error
-          })
-      );
-      
-      // Wait for all models in the batch to be processed
-      const enhancedBatch = await Promise.all(batchPromises);
-      
-      // Update the models in the structure
-      for (let j = 0; j < enhancedBatch.length; j++) {
-        enhancedStructure.models[i + j] = enhancedBatch[j];
+
+      // Try to extract the API description from the OpenAI response
+      const descMatch = openaiResponse.match(/"description"\s*:\s*"([^"]+)"/);
+      if (descMatch && descMatch[1]) {
+        fallbackStructure.description = descMatch[1];
       }
-      
-      console.log(`Enhanced ${Math.min(i + batchSize, totalModels)}/${totalModels} models`);
+
+      // Try to extract the API version from the OpenAI response
+      const versionMatch = openaiResponse.match(/"version"\s*:\s*"([^"]+)"/);
+      if (versionMatch && versionMatch[1]) {
+        fallbackStructure.version = versionMatch[1];
+      }
+
+      // Try to extract the basePath from the OpenAI response
+      const basePathMatch = openaiResponse.match(/"basePath"\s*:\s*"([^"]+)"/);
+      if (basePathMatch && basePathMatch[1]) {
+        fallbackStructure.basePath = basePathMatch[1];
+      }
+
+      // IMPORTANT: Use the existing models from the code analysis
+      // This is critical as the models are analyzed directly from the code
+      if (existingStructure.models && existingStructure.models.length > 0) {
+        console.log(`Using ${existingStructure.models.length} models from code analysis`);
+
+        // Process each model to ensure the properties are in the correct format
+        fallbackStructure.models = existingStructure.models.map((model) => {
+          // Check if the model properties are properly structured
+          if (model.properties && Array.isArray(model.properties)) {
+            return model;
+          } else if (model.properties && typeof model.properties === 'object') {
+            // Convert object properties to array format expected by the spec generator
+            const propertyArray = Object.entries(model.properties).map(([name, details]) => {
+              return {
+                name,
+                ...(details as any),
+              };
+            });
+
+            return {
+              ...model,
+              properties: propertyArray,
+            };
+          }
+
+          // Return the model as is if properties are missing
+          return model;
+        });
+      }
+
+      // Try to extract endpoints from the OpenAI response
+      // This is more challenging, but we can attempt to extract them from the JSON
+      try {
+        // Extract endpoints array - look for the patterns in the AI response
+        const endpointSection = openaiResponse.match(/"endpoints"\s*:\s*\[([\s\S]*?)\]\s*(?:,|$)/);
+        if (endpointSection && endpointSection[1]) {
+          // Process endpoint data to extract valid endpoints
+          const endpointItems = this.extractEndpointsFromText(endpointSection[1]);
+          if (endpointItems.length > 0) {
+            console.log(`Extracted ${endpointItems.length} endpoints from the OpenAI response`);
+            fallbackStructure.endpoints = endpointItems;
+          }
+        }
+      } catch (endpointError) {
+        console.warn('Failed to extract endpoints from OpenAI response:', endpointError);
+      }
+
+      // If we still don't have any endpoints, use the ones from the code analysis
+      if (
+        fallbackStructure.endpoints.length === 0 &&
+        existingStructure.endpoints &&
+        existingStructure.endpoints.length > 0
+      ) {
+        console.log(`Using ${existingStructure.endpoints.length} endpoints from code analysis`);
+        fallbackStructure.endpoints = existingStructure.endpoints;
+      }
+
+      return fallbackStructure;
+    } catch (error) {
+      console.error('Error creating fallback API structure:', error);
+
+      // As a last resort, just return the existing structure from code analysis
+      return {
+        ...existingStructure,
+        name: existingStructure.name || 'API',
+        description:
+          existingStructure.description || 'Generated API specification from code analysis',
+        version: '1.0.0',
+        basePath: existingStructure.basePath || '/api',
+      };
     }
-    
-    return enhancedStructure;
   }
 
   /**
-   * Build prompt for generating a full API specification
+   * Extract endpoints from text/JSON that may be malformed
+   * @param text Text containing endpoint information
+   * @returns Array of endpoints extracted from the text
+   */
+  private extractEndpointsFromText(text: string): EndpointInfo[] {
+    const endpoints: EndpointInfo[] = [];
+
+    try {
+      // Split by endpoint object boundaries
+      const endpointBlocks = text.split(/}\s*,\s*{/);
+
+      for (let i = 0; i < endpointBlocks.length; i++) {
+        let block = endpointBlocks[i];
+
+        // Add braces if needed
+        if (i > 0) block = '{' + block;
+        if (i < endpointBlocks.length - 1) block = block + '}';
+
+        try {
+          // Try to parse each block as JSON
+          const endpoint = JSON.parse(block);
+
+          // Validate required fields
+          if (endpoint.path && endpoint.method) {
+            endpoints.push({
+              path: endpoint.path,
+              method: endpoint.method,
+              description:
+                endpoint.description || `${endpoint.method.toUpperCase()} ${endpoint.path}`,
+              parameters: endpoint.parameters || [],
+              responses: endpoint.responses || [],
+              requestBody: endpoint.requestBody || undefined,
+              tags: endpoint.tags || [],
+            });
+          }
+        } catch (blockError) {
+          // Extract essential fields using regex if JSON parsing fails
+          const pathMatch = block.match(/"path"\s*:\s*"([^"]+)"/);
+          const methodMatch = block.match(/"method"\s*:\s*"([^"]+)"/);
+
+          if (pathMatch && methodMatch) {
+            const descMatch = block.match(/"description"\s*:\s*"([^"]+)"/);
+
+            endpoints.push({
+              path: pathMatch[1],
+              method: methodMatch[1],
+              description: descMatch
+                ? descMatch[1]
+                : `${methodMatch[1].toUpperCase()} ${pathMatch[1]}`,
+              parameters: [],
+              responses: [],
+              tags: [],
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error processing endpoint blocks:', error);
+    }
+
+    return endpoints;
+  }
+
+  /**
+   * Build prompt for generating a full API specification with enhanced detail
    * @param analysisResult Result of codebase analysis
-   * @returns Prompt for OpenAI
+   * @returns Enhanced prompt for OpenAI
    */
   private buildFullApiSpecPrompt(analysisResult: CodebaseAnalysisResult): string {
     const { detectedLanguage, detectedFramework, apiStructure, parserUsed } = analysisResult;
-    
-    let prompt = `Generate a complete API specification for the following codebase:\n\n`;
+
+    let prompt = `Generate a complete and detailed OpenAPI specification for the following codebase:\n\n`;
     prompt += `Language: ${detectedLanguage}\n`;
     prompt += `Framework: ${detectedFramework}\n`;
     prompt += `Parser Used: ${parserUsed}\n\n`;
-    
+
     if (apiStructure.name) {
       prompt += `API Name: ${apiStructure.name}\n`;
     }
-    
+
     if (apiStructure.description) {
       prompt += `API Description: ${apiStructure.description}\n`;
     }
-    
+
     if (apiStructure.basePath) {
       prompt += `Base Path: ${apiStructure.basePath}\n`;
     }
-    
+
     // Include detected endpoints as a starting point
     if (apiStructure.endpoints && apiStructure.endpoints.length > 0) {
       prompt += `\nDetected Endpoints (${apiStructure.endpoints.length}):\n`;
@@ -205,25 +364,107 @@ export class AIService {
         prompt += `- ${endpoint.method.toUpperCase()} ${endpoint.path}`;
         if (endpoint.summary) prompt += `: ${endpoint.summary}`;
         prompt += '\n';
+
+        // Include any parameters that were detected
+        if (endpoint.parameters && endpoint.parameters.length > 0) {
+          prompt += `  Parameters:\n`;
+          for (const param of endpoint.parameters) {
+            prompt += `    - ${param.name} (${param.location || 'unknown'}, ${param.required ? 'required' : 'optional'})\n`;
+          }
+        }
       }
     } else {
       prompt += `\nNo endpoints detected. Please infer likely endpoints based on the language and framework.\n`;
     }
-    
+
     // Include detected models as a starting point
     if (apiStructure.models && apiStructure.models.length > 0) {
       prompt += `\nDetected Models (${apiStructure.models.length}):\n`;
       for (const model of apiStructure.models) {
-        prompt += `- ${model.name}\n`;
+        prompt += `- ${model.name}: ${model.description || 'No description'}\n`;
+
+        // Include model properties for better context
+        if (model.properties && model.properties.length > 0) {
+          prompt += `  Properties:\n`;
+          for (const prop of model.properties) {
+            prompt += `    - ${prop.name}: ${prop.type}${prop.required ? ' (required)' : ''}\n`;
+          }
+        }
       }
     }
-    
-    prompt += `\nPlease generate a comprehensive API specification with detailed endpoint information. For each endpoint, provide:
-1. A clear, concise summary
-2. A detailed description of what the endpoint does, its use cases, and any important notes
-3. Complete parameter information (path, query, header parameters)
-4. Request body information if applicable
-5. Detailed response information including status codes and schemas
+
+    prompt += `\nYour task is to create a comprehensive and production-quality API specification. Follow these guidelines:
+
+1. First, analyze the code to identify the domain (e.g., banking, e-commerce, healthcare, messaging, etc.) and adapt the specification to that domain's best practices.
+
+2. DETAILED ENDPOINT DESCRIPTIONS:
+   - Provide clear and comprehensive descriptions for each endpoint
+   - Explain what the endpoint does, its use cases, and expected behavior
+   - Include business context and purpose where possible
+   - The description should be useful to developers implementing clients
+
+3. ACCURATE REQUEST BODIES:
+   - Create detailed request body schemas for POST, PUT, and PATCH methods
+   - Include all necessary fields with appropriate data types
+   - Mark required fields correctly
+   - Add clear descriptions for each field
+   - Include format specifiers where appropriate (e.g., date-time, email, etc.)
+   - ENSURE ALL REQUEST BODIES ARE CONTEXT-APPROPRIATE AND DETAILED
+   - Use domain-specific field patterns appropriate for the API's purpose
+
+4. COMPLETE RESPONSES:
+   - Define all possible response status codes for each endpoint
+   - For status code 200/201, provide a detailed response schema
+   - Include error responses (400, 401, 403, 404, 500) with appropriate error schemas
+   - Each response should have a meaningful description
+   - ALL SUCCESS RESPONSES MUST INCLUDE A SCHEMA THAT REFLECTS THE ACTUAL RETURNED DATA
+   - Use domain-specific response patterns appropriate for the API's purpose
+
+5. PARAMETERS:
+   - Define all path, query, and header parameters
+   - Include descriptions that explain the purpose and format of each parameter
+   - Mark required parameters appropriately
+   - Add format and data type information
+
+6. MODEL DEFINITIONS:
+   - Create or refine all data models used in requests and responses
+   - Provide clear descriptions for models and their properties
+   - Include validation rules (minLength, maxLength, pattern, etc.) when applicable
+   - Use enums for fields with a fixed set of possible values
+   - Organize properties in a logical order
+
+IMPORTANT NOTES:
+- For ${detectedLanguage} with ${detectedFramework}, typical patterns include:
+  * Authentication endpoints for user login/registration
+  * Resource-specific CRUD operations
+  * Versioned API paths with appropriate prefixes
+  * Consistent error handling and response formats
+${
+  detectedFramework === 'Spring Boot' || detectedFramework.includes('Spring')
+    ? `
+- For Spring Boot applications:
+  * Consider standard controller annotations (@RestController, @GetMapping, etc.)
+  * Base paths are often defined in application.properties or application.yml
+  * Look for service methods to understand business logic`
+    : ''
+}
+${
+  detectedFramework === 'Ktor'
+    ? `
+- For Ktor applications:
+  * Look for routing blocks and route definitions
+  * Check for authentication/authorization plugins
+  * Consider content negotiation settings`
+    : ''
+}
+
+- DOMAIN-SPECIFIC GUIDANCE:
+  * For message processing systems: Include request schemas with payload and metadata fields, response schemas with processing results
+  * For routing systems: Include destination, payload, and routing options fields
+  * For financial systems: Include proper transaction fields, account references, and secure patterns
+  * For e-commerce: Include product details, pricing, inventory, and order management patterns
+  * For healthcare: Include patient data with privacy considerations and appointment scheduling patterns
+  * For content management: Include content publishing workflow, versioning, and metadata fields
 
 Return the specification in the following JSON format:
 {
@@ -235,47 +476,100 @@ Return the specification in the following JSON format:
     {
       "path": "/endpoint-path",
       "method": "get|post|put|delete|patch",
-      "summary": "Brief summary",
-      "description": "Detailed description",
+      "summary": "Brief summary of the endpoint (1 line)",
+      "description": "Detailed description explaining the purpose, behavior and usage",
       "parameters": [
         {
           "name": "paramName",
           "location": "path|query|header|cookie",
-          "description": "Parameter description",
+          "description": "Detailed parameter description",
           "required": true|false,
-          "schema": { "type": "string|number|boolean|object|array" }
+          "schema": { 
+            "type": "string|number|boolean|object|array",
+            "format": "date-time|email|uri|etc",
+            "enum": ["value1", "value2"],
+            "minimum": 0,
+            "maximum": 100
+          }
         }
       ],
+      "requestBody": {
+        "description": "Description of the request body",
+        "required": true|false,
+        "contentType": "application/json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "propertyName": {
+              "type": "string|number|boolean|object|array",
+              "description": "Property description",
+              "format": "date-time|email|uri|etc"
+            }
+          },
+          "required": ["propertyName1", "propertyName2"]
+        }
+      },
       "responses": [
         {
           "statusCode": 200,
-          "description": "Success response description",
-          "contentType": "application/json"
+          "description": "Detailed success response description",
+          "contentType": "application/json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "propertyName": {
+                "type": "string|number|boolean|object|array",
+                "description": "Property description"
+              }
+            }
+          }
         },
         {
           "statusCode": 400,
-          "description": "Error response description"
+          "description": "Bad request - detailed error description",
+          "contentType": "application/json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "error": { "type": "string", "description": "Error message" },
+              "details": { "type": "array", "description": "Error details", "items": { "type": "string" } }
+            }
+          }
         }
-      ]
+      ],
+      "tags": ["resource-name", "feature-area"]
     }
   ],
   "models": [
     {
       "name": "ModelName",
-      "description": "Model description",
+      "description": "Detailed model description",
       "properties": [
         {
           "name": "propertyName",
           "type": "string|number|boolean|object|array",
-          "description": "Property description",
-          "required": true|false
+          "description": "Detailed property description",
+          "format": "date-time|email|uri|etc",
+          "required": true|false,
+          "enum": ["value1", "value2"],
+          "pattern": "regex-pattern",
+          "minimum": 0,
+          "maximum": 100
         }
       ]
     }
   ]
 }
 
-Return ONLY the JSON object with no additional text.\n`;
+=== CRITICAL OUTPUT INSTRUCTIONS ===
+1. Return ONLY the JSON object with no additional text
+2. DO NOT include any explanation, introduction, or conclusion text
+3. DO NOT use markdown code blocks (no \`\`\`json or \`\`\` tags)
+4. DO NOT include any text outside the JSON object
+5. Return ONLY raw, valid, parseable JSON directly
+6. The ENTIRE response must be a valid JSON object that can be parsed with JSON.parse()
+
+Your response should start with "{" and end with "}" with no other text before or after.\n`;
 
     return prompt;
   }
@@ -297,17 +591,22 @@ Return ONLY the JSON object with no additional text.\n`;
           messages: [
             {
               role: 'system',
-              content: 'You are an API testing expert who writes high-quality Gherkin scenarios.',
+              content:
+                'You are an API testing expert who writes high-quality Gherkin scenarios. Return only the Gherkin format test scenarios without any explanations, introductions, or additional markdown formatting.',
             },
             { role: 'user', content: prompt },
           ],
-          max_tokens: 1000,
-          temperature: 0.7,
+          max_completion_tokens: 4000,
+          ...(this.isO4Model ? {} : { temperature: 0.7 }),
         }),
         // Add timeout
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error(`OpenAI API timeout after ${this.defaultTimeout/1000} seconds`)), this.defaultTimeout)
-        )
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(new Error(`OpenAI API timeout after ${this.defaultTimeout / 1000} seconds`)),
+            this.defaultTimeout,
+          ),
+        ),
       ]);
 
       return response.choices[0]?.message.content || '';
@@ -334,17 +633,21 @@ Return ONLY the JSON object with no additional text.\n`;
             {
               role: 'system',
               content:
-                'You are a data generation expert who creates realistic mock data for testing.',
+                'You are a data generation expert who creates realistic mock data for testing. IMPORTANT: Return ONLY a valid JSON object with no explanations or markdown formatting. Your entire response must be a parseable JSON object.',
             },
             { role: 'user', content: prompt },
           ],
-          max_tokens: 1000,
-          temperature: 0.7,
+          max_completion_tokens: 4000,
+          ...(this.isO4Model ? {} : { temperature: 0.7 }),
         }),
         // Add timeout
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error(`OpenAI API timeout after ${this.defaultTimeout/1000} seconds`)), this.defaultTimeout)
-        )
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(new Error(`OpenAI API timeout after ${this.defaultTimeout / 1000} seconds`)),
+            this.defaultTimeout,
+          ),
+        ),
       ]);
 
       const resultText = response.choices[0]?.message.content || '';
@@ -354,117 +657,6 @@ Return ONLY the JSON object with no additional text.\n`;
     } catch (error) {
       console.error('Error generating mock data with AI:', error);
       return null;
-    }
-  }
-
-  /**
-   * Enhance endpoint information using AI
-   * @param endpoint Endpoint to enhance
-   * @param language Programming language 
-   * @param framework Framework name
-   * @returns Enhanced endpoint information
-   */
-  async enhanceEndpoint(
-    endpoint: EndpointInfo,
-    language: string, 
-    framework: string
-  ): Promise<EndpointInfo> {
-    try {
-      console.log(`Enhancing endpoint ${endpoint.method.toUpperCase()} ${endpoint.path}...`);
-      const prompt = this.buildEndpointEnhancementPrompt(endpoint, language, framework);
-
-      const response = await Promise.race([
-        this.openai.chat.completions.create({
-          model: this.defaultModel,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an expert API documentation writer. You create detailed, accurate API specifications in JSON format. Your JSON is always valid, with correct syntax, no trailing commas, and proper quotes. Your responses are ONLY the JSON object with no explanations.',
-            },
-            { role: 'user', content: prompt },
-          ],
-          max_tokens: 1000,
-          temperature: 0.3,
-        }),
-        // Add timeout
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error(`OpenAI API timeout after ${this.defaultTimeout/1000} seconds`)), this.defaultTimeout)
-        )
-      ]);
-
-      const resultText = response.choices[0]?.message.content || '';
-      
-      // Try to extract and parse the JSON
-      let parsedResult;
-      try {
-        parsedResult = this.extractAndParseJSON(resultText);
-        console.log(`Successfully enhanced endpoint ${endpoint.method.toUpperCase()} ${endpoint.path}`);
-      } catch (parseError) {
-        console.error(`Error parsing AI response for endpoint ${endpoint.path}:`, parseError);
-        // Create a basic structure with any extractable information
-        parsedResult = this.createPlaceholderFromText(resultText);
-      }
-
-      // Return enhanced endpoint
-      return {
-        ...endpoint,
-        ...parsedResult
-      };
-    } catch (error) {
-      console.error(`Error enhancing endpoint ${endpoint.method} ${endpoint.path}:`, 
-        error instanceof Error ? error.message : error);
-      // Return original endpoint if enhancement fails
-      return endpoint; 
-    }
-  }
-
-  /**
-   * Enhance model information using AI
-   * @param model Model to enhance
-   * @param language Programming language
-   * @param framework Framework name
-   * @returns Enhanced model information
-   */
-  async enhanceModel(
-    model: ModelInfo,
-    language: string,
-    framework: string
-  ): Promise<ModelInfo> {
-    try {
-      console.log(`Enhancing model ${model.name}...`);
-      const prompt = this.buildModelEnhancementPrompt(model, language, framework);
-
-      const response = await Promise.race([
-        this.openai.chat.completions.create({
-          model: this.defaultModel,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a data modeling expert who can provide detailed information about data models.',
-            },
-            { role: 'user', content: prompt },
-          ],
-          max_tokens: 1000,
-          temperature: 0.3,
-        }),
-        // Add timeout
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error(`OpenAI API timeout after ${this.defaultTimeout/1000} seconds`)), this.defaultTimeout)
-        )
-      ]);
-
-      const resultText = response.choices[0]?.message.content || '';
-      console.log(`Successfully enhanced model ${model.name}`);
-
-      // Extract enhanced model information as JSON
-      return {
-        ...model,
-        ...this.extractAndParseJSON(resultText)
-      };
-    } catch (error) {
-      console.error(`Error enhancing model ${model.name}:`, 
-        error instanceof Error ? error.message : error);
-      return model; // Return original model if enhancement fails
     }
   }
 
@@ -518,8 +710,14 @@ Scenario: [Title]
   Then [verification]
   And [additional verification steps]
 
-Be specific about required parameters, request body structure, and expected response.
-DO NOT include any explanation text, only the Gherkin scenarios.\n`;
+=== CRITICAL OUTPUT INSTRUCTIONS ===
+1. Return ONLY the Gherkin scenarios with no additional text
+2. DO NOT include any explanation, introduction, or conclusion text
+3. DO NOT add any comments or notes outside the Gherkin format
+4. Start your response directly with "Scenario:" for the first scenario
+5. Do not include any markdown formatting
+6. Do not number your scenarios
+7. Do not wrap your response in code blocks\n`;
 
     return prompt;
   }
@@ -537,135 +735,16 @@ DO NOT include any explanation text, only the Gherkin scenarios.\n`;
 
     prompt += `Please generate a valid JSON object that conforms to this schema.
 Make the data realistic and contextually appropriate.
-Return ONLY the JSON object with NO additional text or explanations.\n`;
 
-    return prompt;
-  }
+=== CRITICAL OUTPUT INSTRUCTIONS ===
+1. Return ONLY the JSON object with no additional text
+2. DO NOT include any explanation, introduction, or conclusion text
+3. DO NOT use markdown code blocks (no \`\`\`json or \`\`\` tags)
+4. DO NOT include any text outside the JSON object
+5. Return ONLY raw, valid, parseable JSON directly
+6. The ENTIRE response must be a valid JSON object that can be parsed with JSON.parse()
 
-  /**
-   * Build prompt for enhancing endpoint information
-   * @param endpoint Endpoint to enhance
-   * @param language Programming language
-   * @param framework Framework name
-   * @returns Prompt for OpenAI
-   */
-  private buildEndpointEnhancementPrompt(
-    endpoint: EndpointInfo,
-    language: string,
-    framework: string
-  ): string {
-    let prompt = `Enhance the following API endpoint information with better descriptions, parameter details, and response information:\n\n`;
-    prompt += `Endpoint: ${endpoint.method.toUpperCase()} ${endpoint.path}\n`;
-    prompt += `Programming Language: ${language}\n`;
-    prompt += `Framework: ${framework}\n\n`;
-    
-    if (endpoint.summary) {
-      prompt += `Current Summary: ${endpoint.summary}\n`;
-    }
-    
-    if (endpoint.description) {
-      prompt += `Current Description: ${endpoint.description}\n`;
-    }
-    
-    if (endpoint.parameters && endpoint.parameters.length > 0) {
-      prompt += `\nCurrent Parameters:\n`;
-      for (const param of endpoint.parameters) {
-        prompt += `- ${param.name} (${param.location})${param.required ? ' (required)' : ''}: ${param.description || '[No description]'}\n`;
-      }
-    }
-    
-    if (endpoint.responses && endpoint.responses.length > 0) {
-      prompt += `\nCurrent Responses:\n`;
-      for (const response of endpoint.responses) {
-        prompt += `- ${response.statusCode}: ${response.description || '[No description]'}\n`;
-      }
-    }
-    
-    prompt += `\nPlease provide an improved version of this endpoint information using this exact JSON format without any deviations:
-
-{
-  "summary": "Brief summary of what this endpoint does",
-  "description": "Detailed description of the endpoint functionality, use cases, and any important notes",
-  "parameters": [
-    {
-      "name": "parameterName",
-      "location": "path",
-      "description": "Detailed description of the parameter",
-      "required": true
-    }
-  ],
-  "responses": [
-    {
-      "statusCode": 200,
-      "description": "Detailed description of the success response",
-      "contentType": "application/json"
-    }
-  ]
-}
-
-EXTREMELY IMPORTANT: Your response must be valid JSON that matches the exact structure shown above.
-- Do not include any text before or after the JSON
-- Ensure all quotation marks around keys and string values use double quotes (")
-- Ensure all properties and array elements have proper commas between them
-- Ensure the response can be directly parsed using JSON.parse()
-- Don't include any explanation, just return the JSON object
-
-For parameters: If there are no parameters, return an empty array [].
-For responses: Always include at least one response (e.g., 200 OK).`;
-
-    return prompt;
-  }
-
-  /**
-   * Build prompt for enhancing model information
-   * @param model Model to enhance
-   * @param language Programming language
-   * @param framework Framework name
-   * @returns Prompt for OpenAI
-   */
-  private buildModelEnhancementPrompt(
-    model: ModelInfo,
-    language: string,
-    framework: string
-  ): string {
-    let prompt = `Enhance the following data model information with better descriptions and property details:\n\n`;
-    prompt += `Model Name: ${model.name}\n`;
-    prompt += `Programming Language: ${language}\n`;
-    prompt += `Framework: ${framework}\n\n`;
-    
-    if (model.description) {
-      prompt += `Current Description: ${model.description}\n`;
-    }
-    
-    if (model.properties && model.properties.length > 0) {
-      prompt += `\nCurrent Properties:\n`;
-      for (const prop of model.properties) {
-        prompt += `- ${prop.name} (${prop.type})${prop.required ? ' (required)' : ''}: ${prop.description || '[No description]'}\n`;
-      }
-    }
-    
-    prompt += `\nPlease provide an improved version of this model information using this exact JSON format without any deviations:
-
-{
-  "description": "Detailed description of what this model represents, its purpose and usage",
-  "properties": [
-    {
-      "name": "propertyName",
-      "type": "string",
-      "description": "Detailed description of the property",
-      "required": true
-    }
-  ]
-}
-
-EXTREMELY IMPORTANT: Your response must be valid JSON that matches the exact structure shown above.
-- Do not include any text before or after the JSON
-- Ensure all quotation marks around keys and string values use double quotes (")
-- Ensure all properties and array elements have proper commas between them
-- Ensure the response can be directly parsed using JSON.parse()
-- Don't include any explanation, just return the JSON object
-
-For properties: If there are no properties, return an empty array [].`;
+Your response should start with "{" and end with "}" with no other text before or after.\n`;
 
     return prompt;
   }
@@ -673,240 +752,394 @@ For properties: If there are no properties, return an empty array [].`;
   /**
    * Extract and parse JSON from text
    * @param text Text potentially containing JSON
-   * @returns Parsed JSON object or null
+   * @returns Parsed JSON object
+   * @throws Error if parsing fails
    */
   private extractAndParseJSON(text: string): any {
+    if (!text || typeof text !== 'string') {
+      console.error('Invalid text input for JSON parsing:', typeof text);
+      throw new Error('Invalid response from OpenAI API: empty or non-string response');
+    }
+
+    // Log size for debugging
+    console.log(`Processing OpenAI response with ${text.length} characters`);
+
     try {
       // Try to parse the entire text as JSON first
       return JSON.parse(text);
-    } catch (e) {
-      // If that fails, try more extensive cleaning and extraction methods
-      try {
-        // Pre-process the text to make JSON extraction more reliable
-        let processedText = text.trim();
-        
-        // Remove any markdown code block markers
-        processedText = processedText.replace(/```(?:json)?\s*/g, '').replace(/\s*```\s*$/g, '');
-        
-        // Try direct JSON parsing again after basic cleanup
+    } catch (e: any) {
+      console.log('Initial JSON parsing failed, trying to cleanup response');
+      console.log('First parse error:', e.message);
+
+      // Process text to clean up common issues
+      let processedText = text.trim();
+
+      // Check if response is in markdown code block format (common with newer models)
+      const codeBlockMatch = processedText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch && codeBlockMatch[1]) {
+        console.log('Found JSON in markdown code block, extracting content');
+        processedText = codeBlockMatch[1].trim();
+
         try {
           return JSON.parse(processedText);
-        } catch (cleanError) {
-          // Continue with more advanced extraction
+        } catch (codeBlockError: any) {
+          console.log('Code block content parsing failed:', codeBlockError.message);
+          // Continue with other cleanup methods
         }
-        
-        // More robust JSON extraction - find content between outermost braces
-        const jsonRegex = /{[\s\S]*}/m;
-        const match = processedText.match(jsonRegex);
+      }
 
-        if (match && match[0]) {
-          const potentialJson = match[0];
-          try {
-            return JSON.parse(potentialJson);
-          } catch (innerError) {
-            // Try to clean the JSON by removing common issues
-            const cleanedJson = this.cleanJsonString(potentialJson);
+      // Remove any markdown code block markers which are common in AI responses
+      processedText = processedText.replace(/```(?:json)?\s*/g, '').replace(/\s*```\s*$/g, '');
+
+      // Try to remove any comments which are invalid in JSON
+      processedText = processedText.replace(/\/\/.*$/gm, ''); // Remove single-line comments
+      processedText = processedText.replace(/\/\*[\s\S]*?\*\//g, '');
+
+      try {
+        console.log('Trying to parse after removing comments and code blocks');
+        return JSON.parse(processedText);
+      } catch (cleanError: any) {
+        console.log('JSON parsing failed after basic cleanup:', cleanError.message);
+        console.log('First 100 chars:', processedText.substring(0, 100));
+        console.log('Last 100 chars:', processedText.substring(processedText.length - 100));
+
+        // Enhanced JSON repair approach
+        try {
+          // First try to find valid JSON between braces
+          const jsonRegex = /{[\s\S]*}/m;
+          const match = processedText.match(jsonRegex);
+
+          if (match && match[0]) {
+            console.log(`Found JSON-like content (${match[0].length} chars)`);
             try {
-              return JSON.parse(cleanedJson);
-            } catch (cleanError) {
-              // Try even more aggressive cleaning
-              const aggressiveCleanedJson = this.aggressiveJsonCleaning(cleanedJson);
+              return JSON.parse(match[0]);
+            } catch (extractError: any) {
+              console.log('Extracted content parsing failed:', extractError.message);
+
+              // More aggressive JSON repair
+              const originalJson = match[0];
+              let repairedJson = originalJson;
+
+              // Fix unclosed quotes in property names and string values
+              repairedJson = this.fixUnclosedStrings(repairedJson);
+
+              // Fix unbalanced braces and brackets
+              repairedJson = this.fixUnbalancedBraces(repairedJson);
+
+              // Fix trailing commas
+              repairedJson = repairedJson.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+
               try {
-                return JSON.parse(aggressiveCleanedJson);
-              } catch (aggressiveError) {
-                // Try extreme JSON reconstruction as a last resort
-                const reconstructedJson = this.reconstructJson(potentialJson);
-                return JSON.parse(reconstructedJson);
+                console.log('Attempting to parse repaired JSON');
+                return JSON.parse(repairedJson);
+              } catch (repairError: any) {
+                console.log('Repaired JSON parsing failed:', repairError.message);
+
+                // Last resort: try to extract key parts of the JSON structure
+                return this.attemptJSONRecovery(processedText);
               }
             }
+          } else {
+            // No valid JSON found, try the recovery approach
+            return this.attemptJSONRecovery(processedText);
           }
+        } catch (error) {
+          console.error('All JSON extraction attempts failed');
+          return this.attemptJSONRecovery(processedText);
         }
-      } catch (e2) {
-        // Suppressing detailed error logging here as it's expected with gpt-3.5-turbo
-        console.error('Failed to parse AI-generated data');
       }
-
-      // If all attempts fail, create a simplified structure based on the original text
-      return this.createPlaceholderFromText(text);
     }
   }
 
   /**
-   * Extreme JSON reconstruction - completely rebuilds the JSON object from scratch
-   * This is a last resort when all other parsing attempts fail
-   * @param text The text to reconstruct as JSON
-   * @returns Reconstructed JSON string
+   * Fix unclosed strings in JSON
+   * @param json JSON string that may have unclosed strings
+   * @returns Fixed JSON string
    */
-  private reconstructJson(text: string): string {
-    // Extract key info using regex patterns
-    const summaryMatch = text.match(/"summary"\s*:\s*"([^"]*)"/);
-    const descriptionMatch = text.match(/"description"\s*:\s*"([^"]*)"/);
-    
-    // Extract parameters by looking for patterns
-    const parameters: any[] = [];
-    const paramRegex = /"name"\s*:\s*"([^"]*)"/g;
-    const paramMatches = text.matchAll(paramRegex);
-    
-    for (const match of paramMatches) {
-      if (match[1]) {
-        parameters.push({
-          name: match[1],
-          location: "path", // Default
-          description: `Parameter ${match[1]}`,
-          required: false
-        });
-      }
-    }
-    
-    // Build a simple valid response
-    const result = {
-      summary: summaryMatch ? summaryMatch[1] : "API endpoint",
-      description: descriptionMatch ? descriptionMatch[1] : "API endpoint description",
-      parameters: parameters,
-      responses: [
-        {
-          statusCode: 200,
-          description: "Successful operation",
-          contentType: "application/json"
-        }
-      ]
-    };
-    
-    return JSON.stringify(result);
-  }
+  private fixUnclosedStrings(json: string): string {
+    // Keep track of string state
+    let inString = false;
+    let stringStart = -1;
+    let quoteChar = '';
+    let result = '';
 
-  /**
-   * Creates a simple placeholder object based on text content
-   * This is a last resort when JSON parsing fails completely
-   * @param text Text to extract information from
-   */
-  private createPlaceholderFromText(text: string): any {
-    const result: any = {};
-    
-    // Try to extract summary if present
-    const summaryMatch = text.match(/summary["\s:]+([^"]+)/i);
-    if (summaryMatch && summaryMatch[1]) {
-      result.summary = summaryMatch[1].trim();
-    } else {
-      result.summary = "API Endpoint";
-    }
-    
-    // Try to extract description if present
-    const descMatch = text.match(/description["\s:]+([^"]+)/i);
-    if (descMatch && descMatch[1]) {
-      result.description = descMatch[1].trim();
-    } else if (text.length > 10) {
-      // Take first 100 chars as description
-      result.description = text.substring(0, Math.min(100, text.length)) + '...';
-    } else {
-      result.description = "Description not available";
-    }
-    
-    // Create minimal valid structure for parameters and responses
-    result.parameters = [];
-    result.responses = [
-      {
-        statusCode: 200,
-        description: "Successful operation",
-        contentType: "application/json"
+    for (let i = 0; i < json.length; i++) {
+      const char = json[i];
+      const prevChar = i > 0 ? json[i - 1] : '';
+
+      // Handle quotes (start/end of strings)
+      if ((char === '"' || char === "'") && prevChar !== '\\') {
+        if (inString) {
+          // If we're in a string and the quote type matches, we're ending a string
+          if (char === quoteChar) {
+            inString = false;
+            quoteChar = '';
+          }
+        } else {
+          // Starting a new string
+          inString = true;
+          quoteChar = char;
+          stringStart = i;
+        }
       }
-    ];
-    
+
+      result += char;
+    }
+
+    // If we're still in a string at the end, close it
+    if (inString) {
+      result += quoteChar;
+      console.log(`Fixed unclosed string that started at position ${stringStart}`);
+    }
+
     return result;
   }
 
   /**
-   * More aggressive JSON cleaning for problematic AI outputs
-   * @param jsonString Partially cleaned JSON string
-   * @returns More aggressively cleaned JSON string
+   * Fix unbalanced braces and brackets in JSON
+   * @param json JSON string that may have unbalanced braces
+   * @returns Fixed JSON string
    */
-  private aggressiveJsonCleaning(jsonString: string): string {
-    // Start with regular cleaning
-    let cleaned = this.cleanJsonString(jsonString);
-    
-    // Remove all newlines and extra spaces
-    cleaned = cleaned.replace(/\s+/g, ' ').trim();
-    
-    // Fix common issues with quotation marks
-    cleaned = cleaned.replace(/(['"])([a-zA-Z0-9_]+)(['"])(\s*:)/g, '"$2"$4'); // Normalize property names
-    cleaned = cleaned.replace(/:\s*(['"])([^'"]*?)(['"])([\s,}])/g, ': "$2"$4'); // Normalize string values
-    
-    // Fix missing quotes around property names
-    cleaned = cleaned.replace(/([{,]\s*)([a-zA-Z0-9_]+)(\s*:)/g, '$1"$2"$3');
-    
-    // Fix common trailing comma issues
-    cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
-    
-    // Add missing commas between properties
-    cleaned = cleaned.replace(/"\s*}\s*"/g, '", "');
-    cleaned = cleaned.replace(/"\s*{\s*"/g, '", {"');
-    cleaned = cleaned.replace(/true\s*"/g, 'true, "');
-    cleaned = cleaned.replace(/false\s*"/g, 'false, "');
-    cleaned = cleaned.replace(/"\s*{/g, '", {');
-    cleaned = cleaned.replace(/}\s*"/g, '}, "');
-    cleaned = cleaned.replace(/]\s*"/g, '], "');
-    cleaned = cleaned.replace(/"\s*\[/g, '", [');
-    
-    // Fix unclosed objects and arrays
-    const openBraces = (cleaned.match(/{/g) || []).length;
-    const closeBraces = (cleaned.match(/}/g) || []).length;
-    if (openBraces > closeBraces) {
-      cleaned = cleaned + '}'.repeat(openBraces - closeBraces);
+  private fixUnbalancedBraces(json: string): string {
+    let openBraces = 0;
+    let openBrackets = 0;
+
+    // Count opening and closing braces/brackets
+    for (let i = 0; i < json.length; i++) {
+      const char = json[i];
+
+      if (char === '{') openBraces++;
+      else if (char === '}') openBraces--;
+      else if (char === '[') openBrackets++;
+      else if (char === ']') openBrackets--;
     }
-    
-    const openBrackets = (cleaned.match(/\[/g) || []).length;
-    const closeBrackets = (cleaned.match(/\]/g) || []).length;
-    if (openBrackets > closeBrackets) {
-      cleaned = cleaned + ']'.repeat(openBrackets - closeBrackets);
+
+    let result = json;
+
+    // Add missing closing braces
+    if (openBraces > 0) {
+      console.log(`Adding ${openBraces} missing closing braces`);
+      result += '}'.repeat(openBraces);
     }
-    
-    // Remove any trailing characters after the last closing brace/bracket
-    cleaned = cleaned.replace(/}[^}]*$/, '}');
-    cleaned = cleaned.replace(/\][^\]]*$/, ']');
-    
-    // Fix missing commas in arrays of objects
-    cleaned = cleaned.replace(/}(\s*){/g, '}, {');
-    
-    // Fix trailing commas in array/object
-    cleaned = cleaned.replace(/,(\s*)(}|\])/g, '$1$2');
-    
-    return cleaned;
+
+    // Add missing closing brackets
+    if (openBrackets > 0) {
+      console.log(`Adding ${openBrackets} missing closing brackets`);
+      result += ']'.repeat(openBrackets);
+    }
+
+    // Handle negative cases (more closing than opening)
+    if (openBraces < 0) {
+      console.log(`JSON has ${Math.abs(openBraces)} extra closing braces - removing from the end`);
+      let count = Math.abs(openBraces);
+      let i = result.length - 1;
+
+      while (count > 0 && i >= 0) {
+        if (result[i] === '}') {
+          result = result.substring(0, i) + result.substring(i + 1);
+          count--;
+        }
+        i--;
+      }
+    }
+
+    if (openBrackets < 0) {
+      console.log(
+        `JSON has ${Math.abs(openBrackets)} extra closing brackets - removing from the end`,
+      );
+      let count = Math.abs(openBrackets);
+      let i = result.length - 1;
+
+      while (count > 0 && i >= 0) {
+        if (result[i] === ']') {
+          result = result.substring(0, i) + result.substring(i + 1);
+          count--;
+        }
+        i--;
+      }
+    }
+
+    return result;
   }
 
   /**
-   * Clean JSON string to fix common issues in AI-generated JSON
-   * @param jsonString The potentially malformed JSON string
-   * @returns Cleaned JSON string
+   * Attempt to recover JSON by manually processing the content
+   * @param text JSON-like text to recover
+   * @returns Parsed JSON object or null if recovery failed
    */
-  private cleanJsonString(jsonString: string): string {
-    // Remove trailing commas before closing brackets
-    let cleaned = jsonString.replace(/,\s*([\]}])/g, '$1');
-    
-    // Fix unclosed quotes
-    const openQuotes = (cleaned.match(/"/g) || []).length;
-    if (openQuotes % 2 !== 0) {
-      // Add closing quote to the last property if needed
-      cleaned = cleaned.replace(/([^"])}\s*$/, '$1"}');
+  private attemptJSONRecovery(text: string): any | null {
+    console.log('Attempting manual JSON recovery');
+
+    try {
+      // Normalize whitespace
+      let processed = text.replace(/\s+/g, ' ').trim();
+
+      // Look for valid JSON structure
+      if (
+        processed.startsWith('{') &&
+        (processed.includes('"endpoints"') || processed.includes('"models"'))
+      ) {
+        console.log('Found API structure with endpoints and models');
+
+        // Extract key parts we need
+        const nameMatch = processed.match(/"name"\s*:\s*"([^"]+)"/);
+        const descMatch = processed.match(/"description"\s*:\s*"([^"]+)"/);
+        const versionMatch = processed.match(/"version"\s*:\s*"([^"]+)"/);
+        const basePathMatch = processed.match(/"basePath"\s*:\s*"([^"]+)"/);
+
+        // Create base structure with proper typing
+        const recovered: ApiStructure = {
+          name: nameMatch ? nameMatch[1] : 'Recovered API',
+          description: descMatch ? descMatch[1] : 'Recovered from parsing error',
+          version: versionMatch ? versionMatch[1] : '1.0.0',
+          basePath: basePathMatch ? basePathMatch[1] : '/api',
+          endpoints: [],
+          models: [],
+        };
+
+        // Extract endpoints using the more robust endpoint extraction method
+        const endpointMatch = processed.match(/"endpoints"\s*:\s*\[([\s\S]*?)\]\s*(?:,|$)/);
+        if (endpointMatch && endpointMatch[1]) {
+          const endpoints = this.extractEndpointsFromText(endpointMatch[1]);
+          if (endpoints.length > 0) {
+            console.log(`Successfully extracted ${endpoints.length} endpoints from malformed JSON`);
+            recovered.endpoints = endpoints;
+          }
+        }
+
+        // Extract models array using similar approach
+        const modelsMatch = processed.match(/"models"\s*:\s*\[([\s\S]*?)\]\s*(?:,|$)/);
+        if (modelsMatch && modelsMatch[1]) {
+          console.log('Found models section, parsing individually');
+
+          // Extract and process models
+          const models = this.extractModelsFromText(modelsMatch[1]);
+          if (models.length > 0) {
+            console.log(`Successfully extracted ${models.length} models from malformed JSON`);
+            recovered.models = models;
+          }
+        }
+
+        console.log(
+          `Created recovered API structure with ${recovered.endpoints.length} endpoints and ${recovered.models.length} models`,
+        );
+        return recovered;
+      }
+
+      return null;
+    } catch (error) {
+      console.log('JSON recovery failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Extract model definitions from text that may contain malformed JSON
+   * @param text Text containing model definitions
+   * @returns Array of models extracted from the text
+   */
+  private extractModelsFromText(text: string): ModelInfo[] {
+    const models: ModelInfo[] = [];
+
+    try {
+      // Split by model object boundaries
+      const modelBlocks = text.split(/}\s*,\s*{/);
+
+      for (let i = 0; i < modelBlocks.length; i++) {
+        let block = modelBlocks[i];
+
+        // Add braces if needed
+        if (i > 0) block = '{' + block;
+        if (i < modelBlocks.length - 1) block = block + '}';
+
+        try {
+          // Try to parse the block as JSON
+          const model = JSON.parse(block);
+
+          // Validate required fields
+          if (model.name) {
+            // Convert properties to correct format
+            let properties: PropertyInfo[] = [];
+
+            if (model.properties) {
+              if (Array.isArray(model.properties)) {
+                // Properties already in array format
+                properties = model.properties;
+              } else if (typeof model.properties === 'object') {
+                // Properties in object format, convert to array
+                properties = Object.entries(model.properties).map(([name, details]) => {
+                  return {
+                    name,
+                    type: (details as any).type || 'string', // Ensure type is included
+                    ...(details as Record<string, any>),
+                  };
+                });
+              }
+            }
+
+            models.push({
+              name: model.name,
+              description: model.description || `Model for ${model.name}`,
+              properties: properties,
+            });
+          }
+        } catch (blockError) {
+          // Extract essential fields using regex if JSON parsing fails
+          const nameMatch = block.match(/"name"\s*:\s*"([^"]+)"/);
+          const descMatch = block.match(/"description"\s*:\s*"([^"]+)"/);
+
+          if (nameMatch) {
+            // Try to extract properties section
+            const propertiesMatch = block.match(/"properties"\s*:\s*(\{[\s\S]*?\}|\[[\s\S]*?\])/);
+            let properties: PropertyInfo[] = [];
+
+            if (propertiesMatch) {
+              // Attempt to extract property names and types from the properties section
+              const propSection = propertiesMatch[1];
+              const propertyNameMatches = propSection.match(/"([^"]+)"\s*:/g);
+
+              if (propertyNameMatches) {
+                properties = propertyNameMatches.map((match) => {
+                  // Safely extract property name with null check
+                  const propNameMatch = match.match(/"([^"]+)"/);
+                  const propName = propNameMatch ? propNameMatch[1] : 'unknown';
+
+                  // Try to determine property type
+                  let propType = 'string'; // Default type
+
+                  if (propName !== 'unknown') {
+                    // Using a safer regex approach to avoid potential null issues
+                    const typeRegex = new RegExp(
+                      `"${propName}"\\s*:\\s*\\{[^}]*"type"\\s*:\\s*"([^"]+)"`,
+                      'i',
+                    );
+                    const typeMatch = propSection.match(typeRegex);
+                    if (typeMatch && typeMatch[1]) {
+                      propType = typeMatch[1];
+                    }
+                  }
+
+                  return {
+                    name: propName,
+                    type: propType,
+                    description: `Property ${propName} of ${nameMatch[1]}`,
+                  };
+                });
+              }
+            }
+
+            models.push({
+              name: nameMatch[1],
+              description: descMatch ? descMatch[1] : `Model for ${nameMatch[1]}`,
+              properties: properties,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error processing model blocks:', error);
     }
 
-    // Fix missing colons
-    cleaned = cleaned.replace(/"([^"]+)"\s+"/g, '"$1": "');
-    
-    // Fix property values without quotes when they should have them
-    cleaned = cleaned.replace(/"([^"]+)":\s*([^",\d\{\}\[\]true|false|null][^",\{\}\[\]\s]*)\s*([,}])/g, '"$1": "$2"$3');
-    
-    // Fix extra commas
-    cleaned = cleaned.replace(/,\s*,/g, ',');
-    
-    // Remove control characters that can break JSON
-    cleaned = cleaned.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-    
-    // Add missing commas between different data types
-    cleaned = cleaned.replace(/"\s*{/g, '", {');
-    cleaned = cleaned.replace(/}\s*"/g, '}, "');
-    cleaned = cleaned.replace(/"\s*\[/g, '", [');
-    cleaned = cleaned.replace(/]\s*"/g, '], "');
-    
-    return cleaned;
+    return models;
   }
 }

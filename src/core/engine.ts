@@ -3,16 +3,14 @@ import path from 'path';
 import { ApiSchema, GherkinFeature, TestCase, TestResult } from '../types';
 import { ApiSchemaParser } from './parser';
 import { GherkinGenerator } from './gherkinGenerator';
-import { RestClient } from '../runners/restClient';
-import { PostmanRunner } from '../runners/postmanRunner';
+import { CurlRunner } from '../runners/curlRunner';
 import { MockDataGenerator } from '../mockers/dataGenerator';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 export enum RunnerType {
-  REST = 'rest',
-  POSTMAN = 'postman',
+  CURL = 'curl',
 }
 
 /**
@@ -25,11 +23,6 @@ export interface EngineConfig {
   useAI: boolean;
 
   /**
-   * The type of test runner to use
-   */
-  runnerType: RunnerType;
-
-  /**
    * Whether to enable debug logging
    */
   debug?: boolean;
@@ -38,21 +31,18 @@ export interface EngineConfig {
 export class TestEngine {
   private parser: ApiSchemaParser;
   private gherkinGenerator: GherkinGenerator;
-  private restClient: RestClient;
-  private postmanRunner: PostmanRunner;
+  private curlRunner: CurlRunner;
   private mockDataGenerator: MockDataGenerator;
   private testCases: Map<string, TestCase>;
   private features: Map<string, GherkinFeature>;
   private apiSchema: ApiSchema | null;
   private useAI: boolean;
-  private runnerType: RunnerType;
-  private config: EngineConfig;
   private debug: boolean;
+  private config: EngineConfig;
 
   constructor(config?: Partial<EngineConfig>) {
     this.config = {
-      useAI: config?.useAI ?? false,
-      runnerType: config?.runnerType ?? RunnerType.POSTMAN,
+      useAI: true,
     };
     this.debug = config?.debug ?? false;
 
@@ -61,11 +51,9 @@ export class TestEngine {
     }
 
     this.useAI = this.config.useAI;
-    this.runnerType = this.config.runnerType;
     this.parser = new ApiSchemaParser();
     this.gherkinGenerator = new GherkinGenerator(this.useAI);
-    this.restClient = new RestClient();
-    this.postmanRunner = new PostmanRunner();
+    this.curlRunner = new CurlRunner();
     this.mockDataGenerator = new MockDataGenerator(this.useAI);
     this.testCases = new Map();
     this.features = new Map();
@@ -163,8 +151,7 @@ export class TestEngine {
   async executeTests(baseUrl: string, testCaseIds?: string[]): Promise<Map<string, TestResult>> {
     const results = new Map<string, TestResult>();
 
-    this.restClient.setBaseUrl(baseUrl);
-    this.postmanRunner.setBaseUrl(baseUrl);
+    this.curlRunner.setBaseUrl(baseUrl);
 
     const testCasesToRun = testCaseIds
       ? Array.from(this.testCases.entries())
@@ -173,14 +160,7 @@ export class TestEngine {
       : Array.from(this.testCases.values());
 
     for (const testCase of testCasesToRun) {
-      let result: TestResult;
-
-      if (this.runnerType === RunnerType.POSTMAN) {
-        result = await this.postmanRunner.executeTest(testCase);
-      } else {
-        result = await this.restClient.executeTest(testCase);
-      }
-
+      const result = await this.curlRunner.executeTest(testCase);
       results.set(testCase.id, result);
     }
 
@@ -202,14 +182,6 @@ export class TestEngine {
    */
   getAllTestCases(): Map<string, TestCase> {
     return this.testCases;
-  }
-
-  /**
-   * Set the runner type
-   * @param type Runner type
-   */
-  setRunnerType(type: RunnerType): void {
-    this.runnerType = type;
   }
 
   /**
