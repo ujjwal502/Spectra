@@ -4,8 +4,19 @@ import { ApiSchema, GherkinFeature, TestCase, TestResult } from '../types';
 import { ApiSchemaParser } from './parser';
 import { GherkinGenerator } from './gherkinGenerator';
 import { CurlRunner } from '../runners/curlRunner';
+import { NonFunctionalRunner } from '../runners/nonFunctionalRunner';
 import { MockDataGenerator } from '../mockers/dataGenerator';
 import dotenv from 'dotenv';
+import {
+  NonFunctionalConfig,
+  NonFunctionalTestType,
+  EnhancedTestCase,
+  EnhancedTestResult,
+  PerformanceTestConfig,
+  SecurityTestConfig,
+  ReliabilityTestConfig,
+  LoadTestConfig,
+} from '../types/nonfunctional';
 
 dotenv.config();
 
@@ -26,12 +37,28 @@ export interface EngineConfig {
    * Whether to enable debug logging
    */
   debug?: boolean;
+
+  /**
+   * Whether to enable non-functional testing
+   */
+  enableNonFunctionalTests?: boolean;
+
+  /**
+   * Default non-functional test configurations (if enabled)
+   */
+  nonFunctionalDefaults?: {
+    performance?: Partial<PerformanceTestConfig>;
+    security?: Partial<SecurityTestConfig>;
+    reliability?: Partial<ReliabilityTestConfig>;
+    load?: Partial<LoadTestConfig>;
+  };
 }
 
 export class TestEngine {
   private parser: ApiSchemaParser;
   private gherkinGenerator: GherkinGenerator;
   private curlRunner: CurlRunner;
+  private nonFunctionalRunner: NonFunctionalRunner;
   private mockDataGenerator: MockDataGenerator;
   private testCases: Map<string, TestCase>;
   private features: Map<string, GherkinFeature>;
@@ -39,21 +66,58 @@ export class TestEngine {
   private useAI: boolean;
   private debug: boolean;
   private config: EngineConfig;
+  private enableNonFunctionalTests: boolean;
+  private nonFunctionalDefaults: EngineConfig['nonFunctionalDefaults'];
 
   constructor(config?: Partial<EngineConfig>) {
     this.config = {
-      useAI: true,
+      useAI: config?.useAI ?? true,
+      debug: config?.debug ?? false,
+      enableNonFunctionalTests: true,
+      nonFunctionalDefaults: config?.nonFunctionalDefaults || {
+        performance: {
+          type: NonFunctionalTestType.PERFORMANCE,
+          enabled: true,
+          maxResponseTime: 1000, // Default: 1000ms (1s)
+          repetitions: 5,
+        },
+        security: {
+          type: NonFunctionalTestType.SECURITY,
+          enabled: true,
+          sqlInjection: true,
+          xss: true,
+          headers: false,
+          strictSecurity: false,
+        },
+        reliability: {
+          type: NonFunctionalTestType.RELIABILITY,
+          enabled: true,
+          executions: 10,
+          minSuccessRate: 0.95, // 95% success rate
+        },
+        load: {
+          type: NonFunctionalTestType.LOAD,
+          enabled: true,
+          users: 5,
+          duration: 10, // 10 seconds
+          maxResponseTime: 2000, // 2s under load
+        },
+      },
     };
-    this.debug = config?.debug ?? false;
+
+    this.debug = this.config.debug || false;
+    this.useAI = this.config.useAI;
+    this.enableNonFunctionalTests = true;
+    this.nonFunctionalDefaults = this.config.nonFunctionalDefaults;
 
     if (this.debug) {
       console.log(`🔧 TestEngine initialized with config: ${JSON.stringify(this.config)}`);
     }
 
-    this.useAI = this.config.useAI;
     this.parser = new ApiSchemaParser();
     this.gherkinGenerator = new GherkinGenerator(this.useAI);
     this.curlRunner = new CurlRunner();
+    this.nonFunctionalRunner = new NonFunctionalRunner();
     this.mockDataGenerator = new MockDataGenerator(this.useAI);
     this.testCases = new Map();
     this.features = new Map();
@@ -118,10 +182,65 @@ export class TestEngine {
           : undefined,
       };
 
+      // Add non-functional tests if enabled
+      if (this.enableNonFunctionalTests) {
+        this.addNonFunctionalTestConfigs(testCase as EnhancedTestCase);
+      }
+
       this.testCases.set(testCase.id, testCase);
     }
 
     return this.testCases;
+  }
+
+  /**
+   * Add non-functional test configurations to a test case
+   * @param testCase Test case to enhance with non-functional tests
+   */
+  private addNonFunctionalTestConfigs(testCase: EnhancedTestCase): void {
+    if (!this.enableNonFunctionalTests || !this.nonFunctionalDefaults) {
+      return;
+    }
+
+    const nonFunctionalTests: NonFunctionalConfig[] = [];
+
+    // Add performance test
+    if (this.nonFunctionalDefaults.performance) {
+      nonFunctionalTests.push({
+        ...this.nonFunctionalDefaults.performance,
+        type: NonFunctionalTestType.PERFORMANCE,
+        enabled: this.nonFunctionalDefaults.performance.enabled ?? true,
+      } as PerformanceTestConfig);
+    }
+
+    // Add security test
+    if (this.nonFunctionalDefaults.security) {
+      nonFunctionalTests.push({
+        ...this.nonFunctionalDefaults.security,
+        type: NonFunctionalTestType.SECURITY,
+        enabled: this.nonFunctionalDefaults.security.enabled ?? true,
+      } as SecurityTestConfig);
+    }
+
+    // Add reliability test
+    if (this.nonFunctionalDefaults.reliability) {
+      nonFunctionalTests.push({
+        ...this.nonFunctionalDefaults.reliability,
+        type: NonFunctionalTestType.RELIABILITY,
+        enabled: this.nonFunctionalDefaults.reliability.enabled ?? true,
+      } as ReliabilityTestConfig);
+    }
+
+    // Add load test
+    if (this.nonFunctionalDefaults.load) {
+      nonFunctionalTests.push({
+        ...this.nonFunctionalDefaults.load,
+        type: NonFunctionalTestType.LOAD,
+        enabled: this.nonFunctionalDefaults.load.enabled ?? true,
+      } as LoadTestConfig);
+    }
+
+    testCase.nonFunctionalTests = nonFunctionalTests;
   }
 
   /**
@@ -152,6 +271,7 @@ export class TestEngine {
     const results = new Map<string, TestResult>();
 
     this.curlRunner.setBaseUrl(baseUrl);
+    this.nonFunctionalRunner.setBaseUrl(baseUrl);
 
     const testCasesToRun = testCaseIds
       ? Array.from(this.testCases.entries())
@@ -160,11 +280,113 @@ export class TestEngine {
       : Array.from(this.testCases.values());
 
     for (const testCase of testCasesToRun) {
-      const result = await this.curlRunner.executeTest(testCase);
+      let result: TestResult;
+
+      // Run non-functional tests if enabled
+      if (this.enableNonFunctionalTests && 'nonFunctionalTests' in testCase) {
+        const enhancedTestCase = testCase as EnhancedTestCase;
+        result = await this.nonFunctionalRunner.executeNonFunctionalTests(enhancedTestCase);
+      } else {
+        // Run standard functional test
+        result = await this.curlRunner.executeTest(testCase);
+      }
+
       results.set(testCase.id, result);
     }
 
     return results;
+  }
+
+  /**
+   * Execute non-functional tests only
+   * @param baseUrl Base URL for API requests
+   * @param testCaseIds Optional array of test case IDs to run (all if not specified)
+   * @returns Enhanced test results with non-functional testing results
+   */
+  async executeNonFunctionalTests(
+    baseUrl: string,
+    testCaseIds?: string[],
+  ): Promise<Map<string, EnhancedTestResult>> {
+    if (!this.enableNonFunctionalTests) {
+      throw new Error(
+        'Non-functional testing is not enabled. Set enableNonFunctionalTests: true in the TestEngine config.',
+      );
+    }
+
+    const results = new Map<string, EnhancedTestResult>();
+
+    this.nonFunctionalRunner.setBaseUrl(baseUrl);
+
+    const testCasesToRun = testCaseIds
+      ? Array.from(this.testCases.entries())
+          .filter(([id]) => testCaseIds.includes(id))
+          .map(([, testCase]) => testCase as EnhancedTestCase)
+      : Array.from(this.testCases.values()).map((testCase) => testCase as EnhancedTestCase);
+
+    if (this.debug) {
+      console.log(`🚀 Executing non-functional tests for ${testCasesToRun.length} test cases`);
+    }
+
+    for (const testCase of testCasesToRun) {
+      // Ensure the test case has non-functional test configs
+      if (!testCase.nonFunctionalTests || testCase.nonFunctionalTests.length === 0) {
+        this.addNonFunctionalTestConfigs(testCase);
+      }
+
+      const result = await this.nonFunctionalRunner.executeNonFunctionalTests(testCase);
+      results.set(testCase.id, result);
+    }
+
+    return results;
+  }
+
+  /**
+   * Formats the non-functional test results for display
+   * @param results Map of test results
+   * @returns Formatted string for console output
+   */
+  formatNonFunctionalResults(results: Map<string, EnhancedTestResult>): string {
+    let output = '\n== NON-FUNCTIONAL TEST RESULTS ==\n\n';
+
+    for (const [id, result] of results.entries()) {
+      const testCase = this.getTestCase(id);
+      if (!testCase) continue;
+
+      output += `📊 ${testCase.method.toUpperCase()} ${testCase.endpoint} (${id}):\n`;
+
+      // Show functional test result
+      output += `  Functional Test: ${result.success ? '✅ PASS' : '❌ FAIL'}\n`;
+      output += `  Response Time: ${result.duration}ms\n`;
+
+      // Show non-functional test results if available
+      if (result.nonFunctionalResults && result.nonFunctionalResults.length > 0) {
+        output += `  Non-Functional Tests:\n`;
+
+        for (const nonFunctionalResult of result.nonFunctionalResults) {
+          const statusIcon = nonFunctionalResult.success ? '✅' : '❌';
+          output += `    ${statusIcon} ${nonFunctionalResult.type}: ${nonFunctionalResult.details || ''}\n`;
+
+          // Add metrics details
+          if (Object.keys(nonFunctionalResult.metrics).length > 0) {
+            output += '      Metrics:\n';
+            for (const [key, value] of Object.entries(nonFunctionalResult.metrics)) {
+              if (typeof value !== 'object') {
+                output += `        ${key}: ${value}\n`;
+              }
+            }
+          }
+
+          // Add error details if any
+          if (nonFunctionalResult.error) {
+            output += `      Error: ${nonFunctionalResult.error}\n`;
+          }
+        }
+      }
+
+      output += '\n';
+    }
+
+    return output;
   }
 
   /**
@@ -195,5 +417,35 @@ export class TestEngine {
       console.log('📝 Setting API schema manually');
     }
     this.apiSchema = schema;
+  }
+
+  /**
+   * Toggle non-functional testing on/off
+   * @param enable Whether to enable non-functional testing
+   */
+  public enableNonFunctional(enable: boolean): void {
+    this.enableNonFunctionalTests = enable;
+    if (this.debug) {
+      console.log(
+        `${enable ? '🚀' : '🛑'} Non-functional testing ${enable ? 'enabled' : 'disabled'}`,
+      );
+    }
+  }
+
+  /**
+   * Configure non-functional testing defaults
+   * @param config Configuration object for non-functional tests
+   */
+  public configureNonFunctionalTests(config: EngineConfig['nonFunctionalDefaults']): void {
+    if (!config) return;
+
+    this.nonFunctionalDefaults = {
+      ...this.nonFunctionalDefaults,
+      ...config,
+    };
+
+    if (this.debug) {
+      console.log('📝 Updated non-functional test configuration');
+    }
   }
 }

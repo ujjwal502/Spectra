@@ -6,6 +6,7 @@ import { TestCase, TestResult, SpecGeneratorOptions } from './types';
 import { RegressionService } from './services/regressionService';
 import { SpecGenerator } from './generators/specGenerator';
 import { HtmlReportService } from './services/htmlReportService';
+import { EnhancedTestResult } from './types/nonfunctional';
 
 dotenv.config();
 
@@ -87,18 +88,23 @@ async function main(): Promise<void> {
   try {
     const command = args[0];
 
+    // Non-functional testing is always enabled
+    const enableNonFunctionalTesting = true;
+
     // Set AI to always be enabled if OPENAI_API_KEY is present
     const useAI = process.env.OPENAI_API_KEY ? true : false;
 
     const engineOptions = {
       useAI,
+      enableNonFunctionalTests: true, // Always enable non-functional tests
+      debug: true,
     };
 
     const engine = new TestEngine(engineOptions);
     const regressionService = new RegressionService();
 
     // Remove AI flag filtering
-    const processedArgs = args;
+    const processedArgs = args.filter((arg) => arg !== '--nonfunctional');
 
     if (useAI) {
       console.log('🧠 AI-powered features enabled');
@@ -107,9 +113,13 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    console.log('🔬 Non-functional testing enabled');
     console.log('🚀 Using cURL runner for test execution');
 
-    switch (command) {
+    // For run:nonfunctional command, change to 'run' for switch statement
+    const effectiveCommand = command === 'run:nonfunctional' ? 'run' : command;
+
+    switch (effectiveCommand) {
       case 'generate-spec': {
         const sourcePath = processedArgs[1];
         const outputPath = processedArgs[2] || 'api-schema.json';
@@ -222,18 +232,66 @@ async function main(): Promise<void> {
         await engine.loadApiSchema(schemaPath);
 
         console.log('Generating test cases...');
-        await engine.generateTestCases();
+        const testCases = await engine.generateTestCases();
 
         console.log(`Running tests against ${baseUrl}...`);
-        const results = await engine.executeTests(baseUrl);
 
-        console.log(formatTestResults(results));
+        // Select endpoints for non-functional testing (all endpoints will receive functional tests)
+        console.log('🔬 Executing non-functional tests...');
+        // Select a subset of test cases for non-functional testing to avoid long execution times
+        const selectedTestIds = Array.from(testCases.keys())
+          .filter((id, index) => {
+            const testCase = testCases.get(id);
+            // Take some GET and some POST endpoints
+            return (
+              testCase &&
+              (index % 3 === 0 ||
+                testCase.method.toLowerCase() === 'get' ||
+                testCase.method.toLowerCase() === 'post')
+            );
+          })
+          .slice(0, 5); // Limit to 5 test cases
 
-        saveTestResults(results, resultsPath);
-        console.log(`Test results saved to ${resultsPath}`);
+        console.log(`Selected ${selectedTestIds.length} test cases for non-functional testing`);
+
+        // Run non-functional tests on the selected subset
+        const nonFunctionalResults = await engine.executeNonFunctionalTests(
+          baseUrl,
+          selectedTestIds,
+        );
+
+        // Display non-functional results
+        console.log(engine.formatNonFunctionalResults(nonFunctionalResults));
+
+        // Run functional tests on all endpoints
+        console.log(`\n🧪 Running functional tests on all endpoints...`);
+        const functionalResults = await engine.executeTests(baseUrl);
+        console.log(formatTestResults(functionalResults));
+
+        // Save results to files
+        saveTestResults(functionalResults, resultsPath);
+        console.log(`Functional test results saved to ${resultsPath}`);
+
+        // Save non-functional results to a different file
+        const nfResultsPath = resultsPath.replace('.json', '-nonfunctional.json');
+        const resultsArray = Array.from(nonFunctionalResults.entries()).map(([id, result]) => {
+          const testCase = testCases.get(id);
+          return {
+            id,
+            endpoint: testCase?.endpoint,
+            method: testCase?.method,
+            success: result.success,
+            duration: result.duration,
+            nonFunctionalResults: result.nonFunctionalResults,
+          };
+        });
+
+        fs.writeFileSync(nfResultsPath, JSON.stringify(resultsArray, null, 2), 'utf8');
+        console.log(`Non-functional test results saved to ${nfResultsPath}`);
 
         // Generate HTML reports
-        generateHtmlReports(results, projectDir);
+        generateHtmlReports(functionalResults, projectDir);
+
         break;
       }
 
@@ -333,7 +391,9 @@ Options:
   --no-jsdoc       Disable JSDoc extraction
   --base-url=URL   Set the API base URL (default: http://localhost:3000)
 
-Note: AI-powered schema enhancement is automatically enabled when OPENAI_API_KEY is set in your environment
+Note: 
+- AI-powered schema enhancement is automatically enabled when OPENAI_API_KEY is set in your environment
+- Non-functional testing (performance, security, reliability, load) is included in all test runs
 
 Examples:
   npm run dev generate-spec ./my-backend-code ./schemas/generated-api.json

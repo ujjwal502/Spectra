@@ -27,6 +27,7 @@
     "regression:baseline": "ts-node src/index.ts regression:baseline --ai",
     "regression:run": "ts-node src/index.ts regression:run --ai",
     "example:file-upload": "ts-node examples/file-upload-test.ts",
+    "example:nonfunctional": "ts-node examples/nonfunctional-test.ts",
     "test:backend": "ts-node examples/backend-test.ts",
     "test:backend:regression:baseline": "ts-node examples/backend-test.ts --save-baseline",
     "test:backend:regression": "ts-node examples/backend-test.ts --regression",

@@ -14,12 +14,14 @@ Spectra is an advanced API testing automation tool that uses AI to generate, man
 - 📁 **File Upload Support**: Test APIs that require file uploads with multipart/form-data
 - 📈 **Interactive Dashboard**: Visualize test results and regression data through a web interface
 - 🔍 **Code-to-OpenAPI**: Generate OpenAPI specifications directly from backend code
+- 🔬 **Non-Functional Testing**: Test performance, security, reliability, and load capabilities
 
 ## Documentation
 
 - [Newman Integration Guide](./docs/NEWMAN_INTEGRATION.md) - Details on the Postman/Newman integration
 - [File Upload Guide](./docs/FILE_UPLOAD_GUIDE.md) - Step-by-step guide for testing file uploads
 - [Regression Testing Guide](./docs/REGRESSION_TESTING.md) - How to detect API regressions
+- [Non-Functional Testing Guide](./docs/NON_FUNCTIONAL_TESTING.md) - How to test performance, security and other non-functional aspects
 - [Example: File Uploads](./examples/file-upload-test.ts) - Complete example of file upload testing
 - [Dashboard Guide](./docs/DASHBOARD_GUIDE.md) - How to use the Spectra Dashboard
 
@@ -109,6 +111,12 @@ AI-Enhanced Execution (with smarter mock data):
 ```bash
 npm run run:ai -- path/to/openapi.json https://api-base-url.com ./results.json
 ```
+
+Both commands will:
+
+1. Run functional tests on all endpoints
+2. Automatically run non-functional tests (performance, security, reliability, load) on a subset of endpoints
+3. Generate separate reports for functional and non-functional test results
 
 #### Postman/Newman Execution
 
@@ -232,6 +240,34 @@ The Spectra Dashboard provides a modern web interface for visualizing and analyz
 
 The dashboard leverages a modern frontend stack with responsive design for easy access from any device.
 
+### Non-Functional Testing
+
+Spectra includes comprehensive non-functional testing of APIs with every test run, examining:
+
+- **Performance**: Measures response times and validates against thresholds
+- **Security**: Tests for common vulnerabilities like SQL injection and XSS
+- **Reliability**: Verifies API stability under repeated calls
+- **Load Testing**: Simulates multiple concurrent users and measures performance
+
+Non-functional testing is automatically performed on a subset of your API endpoints during every test run:
+
+```bash
+# Regular test execution includes non-functional tests
+npm run run -- path/to/openapi.json https://api-base-url.com ./results.json
+
+# You can also use specific commands for certain backends
+npm run test:backend:nonfunctional
+```
+
+For each test run, Spectra automatically:
+
+1. Selects a representative subset of endpoints for non-functional testing
+2. Executes the tests with appropriate payloads and configurations
+3. Measures and reports detailed metrics for each non-functional aspect
+4. Provides actionable insights on potential issues
+
+See the [Non-Functional Testing Guide](./docs/NON_FUNCTIONAL_TESTING.md) for detailed information on metrics and configuration.
+
 ### File Uploads
 
 Spectra provides comprehensive support for testing APIs that require file uploads using multipart/form-data requests. This feature is available in both the REST client and Postman/Newman runners.
@@ -354,17 +390,18 @@ See the [Regression Testing Guide](./docs/REGRESSION_TESTING.md) for detailed us
 
 ### Phase 3: Advanced Features ✅ (Current)
 
-- Postman/Newman integration for test execution
-- File upload support for multipart/form-data requests
-- Regression testing for detecting API behavior changes
+- Postman/Newman integration for test execution ✅
+- File upload support for multipart/form-data requests ✅
+- Regression testing for detecting API behavior changes ✅
 - Interactive dashboard for test results ✅
+- Non-functional testing (performance, security, reliability, load) ✅
 - CI/CD integration (Coming soon)
 
 ### Phase 4: Enterprise Features
 
 - Multi-environment support
-- Performance testing
 - Custom validation rules
+- Advanced reporting and analytics
 
 ## Contributing
 
