@@ -32,7 +32,10 @@
     "test:backend:regression": "ts-node examples/backend-test.ts --regression",
     "test:mock-api": "ts-node examples/mock-api-test.ts",
     "test:mock-api:regression:baseline": "ts-node examples/mock-api-test.ts --save-baseline",
-    "test:mock-api:regression": "ts-node examples/mock-api-test.ts --regression"
+    "test:mock-api:regression": "ts-node examples/mock-api-test.ts --regression",
+    "dashboard": "node src/ui/start-demo.js",
+    "demo": "node src/ui/start-demo.js",
+    "backend": "node start-backend.js"
   },
   "keywords": [
     "api",

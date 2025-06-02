@@ -16,8 +16,30 @@ Spectra is an advanced API testing automation tool that uses AI to generate, man
 - 🔍 **Code-to-OpenAPI**: Generate OpenAPI specifications directly from backend code
 - 🔬 **Non-Functional Testing**: Test performance, security, reliability, and load capabilities
 
+## 🎯 Quick Demo (Perfect for Client Presentations)
+
+Experience Spectra's AI-powered testing in action with our interactive demo UI:
+
+```bash
+# Start the real-time demo interface
+npm run dashboard
+
+# Or use the demo alias
+npm run demo
+```
+
+Then open `http://localhost:3001` in your browser to see:
+
+- **Real-time test execution** with live progress tracking
+- **AI-generated test cases** and Gherkin scenarios appearing in real-time
+- **Interactive results exploration** with detailed metrics and assertions
+- **Live performance and security testing** with visual feedback
+
+Perfect for showcasing Spectra's capabilities to clients and stakeholders! See [DEMO_UI_GUIDE.md](./DEMO_UI_GUIDE.md) for detailed instructions.
+
 ## Documentation
 
+- [Demo UI Guide](./DEMO_UI_GUIDE.md) - Complete guide for the interactive demo interface
 - [Newman Integration Guide](./docs/NEWMAN_INTEGRATION.md) - Details on the Postman/Newman integration
 - [File Upload Guide](./docs/FILE_UPLOAD_GUIDE.md) - Step-by-step guide for testing file uploads
 - [Regression Testing Guide](./docs/REGRESSION_TESTING.md) - How to detect API regressions

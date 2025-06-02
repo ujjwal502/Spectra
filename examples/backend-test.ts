@@ -120,6 +120,7 @@ async function runBackendTests() {
       useAI, // Use AI if API key is present
       debug: true,
     });
+    console.log('✅ TestEngine created successfully');
 
     // Initialize regression service
     const regressionService = new RegressionService();
@@ -418,6 +419,7 @@ async function runBackendTests() {
     }
 
     // Optionally save generated Gherkin feature files
+    console.log('💾 Saving Gherkin feature files...');
     const featuresDir = path.join(__dirname, 'backend/features');
     if (!fs.existsSync(featuresDir)) {
       fs.mkdirSync(featuresDir, { recursive: true });
@@ -504,6 +506,7 @@ async function runBackendTests() {
     console.log(`  Success rate: ${passRate}%`);
 
     // Save test results
+    console.log('💾 Saving test results...');
     const resultsPath = path.join(__dirname, 'backend/test-results.json');
     const resultsArray = Array.from(results.entries()).map(([id, result]) => ({
       id,
