@@ -22,21 +22,17 @@ const CodeViewer: React.FC<CodeViewerProps> = ({ code }) => {
       </div>
 
       <div className="space-y-4">
-        {/* Tab Navigation */}
-        <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+        {/* Modern Tab Navigation */}
+        <div className="tab-container-modern">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                  activeTab === tab.id
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
+                className={`tab-button-modern ${activeTab === tab.id ? 'active' : ''}`}
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="tab-icon" />
                 <span>{tab.label}</span>
               </button>
             );
@@ -44,18 +40,18 @@ const CodeViewer: React.FC<CodeViewerProps> = ({ code }) => {
         </div>
 
         {/* Code Content */}
-        <div className="bg-gray-900 rounded-lg p-4 max-h-96 overflow-auto">
+        <div className="code-content-modern">
           {tabs.find((tab) => tab.id === activeTab)?.content ? (
-            <pre className="text-sm text-gray-300 font-mono whitespace-pre-wrap">
+            <pre className="code-pre-modern">
               {tabs.find((tab) => tab.id === activeTab)?.content}
             </pre>
           ) : (
-            <div className="text-center py-8 text-gray-500">
-              <Code className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p>
-                No {tabs.find((tab) => tab.id === activeTab)?.label.toLowerCase()} generated yet.
+            <div className="code-empty-state">
+              <Code className="w-12 h-12 mx-auto mb-3 opacity-30" />
+              <p className="text-lg font-medium text-gray-600 mb-1">
+                No {tabs.find((tab) => tab.id === activeTab)?.label.toLowerCase()} generated yet
               </p>
-              <p className="text-sm mt-1">Code will appear here during demo execution.</p>
+              <p className="text-sm text-gray-500">Code will appear here during demo execution</p>
             </div>
           )}
         </div>

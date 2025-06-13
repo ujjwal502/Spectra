@@ -139,38 +139,47 @@ const DemoControls: React.FC<DemoControlsProps> = ({ isRunning, onStart, onStop,
         </div>
       </div>
 
-      {/* Action Buttons */}
+      {/* Action Controls */}
       <div className="card-modern">
-        <div className="action-buttons">
+        <div className="controls-header">
+          <h3 className="controls-title">Execute Tests</h3>
+          <p className="controls-subtitle">Start your backend test suite or manage results</p>
+        </div>
+
+        <div className="controls-grid">
           {!isRunning ? (
-            <button onClick={handleStart} className="btn-primary-modern">
-              <div className="btn-icon bg-green-500">
+            <button onClick={handleStart} className="control-btn control-btn-primary">
+              <div className="control-icon bg-green-500">
                 <Play className="w-5 h-5 text-white" />
               </div>
-              <div className="btn-content">
-                <div className="btn-title">Start Backend Test</div>
-                <div className="btn-subtitle">Execute test suite with monitoring</div>
+              <div className="control-content">
+                <div className="control-title">Start Backend Test</div>
+                <div className="control-subtitle">Execute test suite with monitoring</div>
               </div>
             </button>
           ) : (
-            <button onClick={onStop} className="btn-danger-modern">
-              <div className="btn-icon bg-red-500">
+            <button onClick={onStop} className="control-btn control-btn-danger">
+              <div className="control-icon bg-red-500">
                 <Square className="w-5 h-5 text-white" />
               </div>
-              <div className="btn-content">
-                <div className="btn-title">Stop Test Execution</div>
-                <div className="btn-subtitle">Terminate running tests</div>
+              <div className="control-content">
+                <div className="control-title">Stop Test Execution</div>
+                <div className="control-subtitle">Terminate running tests</div>
               </div>
             </button>
           )}
 
-          <button onClick={onClear} className="btn-secondary-modern" disabled={isRunning}>
-            <div className="btn-icon bg-gray-500">
+          <button
+            onClick={onClear}
+            className="control-btn control-btn-secondary"
+            disabled={isRunning}
+          >
+            <div className="control-icon bg-gray-500">
               <RotateCcw className="w-4 h-4 text-white" />
             </div>
-            <div className="btn-content">
-              <div className="btn-title">Clear Results</div>
-              <div className="btn-subtitle">Reset all test data</div>
+            <div className="control-content">
+              <div className="control-title">Clear Results</div>
+              <div className="control-subtitle">Reset all test data</div>
             </div>
           </button>
         </div>

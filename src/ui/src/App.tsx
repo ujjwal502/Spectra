@@ -38,11 +38,25 @@ const App: React.FC = () => {
 
     // Listen for demo events
     newSocket.on('demo:step', (step: TestStep) => {
-      setDemoState((prev) => ({
-        ...prev,
-        currentStep: step,
-        steps: [...prev.steps, step],
-      }));
+      setDemoState((prev) => {
+        const existingStepIndex = prev.steps.findIndex((s) => s.id === step.id);
+
+        let updatedSteps;
+        if (existingStepIndex >= 0) {
+          // Update existing step
+          updatedSteps = [...prev.steps];
+          updatedSteps[existingStepIndex] = step;
+        } else {
+          // Add new step
+          updatedSteps = [...prev.steps, step];
+        }
+
+        return {
+          ...prev,
+          currentStep: step.status === 'running' ? step : prev.currentStep,
+          steps: updatedSteps,
+        };
+      });
     });
 
     newSocket.on('demo:result', (result: TestResult) => {
@@ -87,6 +101,13 @@ const App: React.FC = () => {
         steps: [],
         testResults: [],
         logs: [],
+      }));
+    });
+
+    newSocket.on('demo:step-completed', (stepId: string) => {
+      setDemoState((prev) => ({
+        ...prev,
+        currentStep: prev.currentStep?.id === stepId ? null : prev.currentStep,
       }));
     });
 
