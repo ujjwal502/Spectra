@@ -113,6 +113,7 @@ export function createSchemaValidator(): Ajv {
     allErrors: true, // Return all errors, not just the first one
     verbose: true, // Include schema path in errors
     validateFormats: true, // Validate formats like date-time, email, etc.
+    strict: false, // Disable strict mode to allow flexible schema formats
   });
 
   // Add the standard formats that come with ajv-formats

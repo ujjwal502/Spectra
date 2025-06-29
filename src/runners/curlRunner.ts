@@ -38,7 +38,7 @@ export class CurlRunner {
 
     try {
       const { id, endpoint, method, request, files, expectedResponse } = testCase;
-      const url = this.constructUrl(endpoint);
+      const url = this.constructUrl(endpoint, request);
 
       const curlCommand = this.buildCurlCommand(url, method, request, files);
 
@@ -133,16 +133,34 @@ export class CurlRunner {
   }
 
   /**
-   * Construct the full URL for the request
+   * Construct the full URL for the request with path parameter substitution
    */
-  private constructUrl(endpoint: string): string {
+  private constructUrl(endpoint: string, request?: any): string {
     if (endpoint.startsWith('http')) {
       return endpoint;
     }
 
-    const baseUrl = this.baseUrl.endsWith('/') ? this.baseUrl.slice(0, -1) : this.baseUrl;
-    const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    let path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
+    // Handle path parameter substitution
+    if (request && typeof request === 'object') {
+      Object.entries(request).forEach(([key, value]) => {
+        const paramPattern = `{${key}}`;
+        if (path.includes(paramPattern)) {
+          // Use actual value or fallback to 1 for testing
+          const actualValue = value && value !== 'valid_string_value' && value !== '' ? value : '1';
+          path = path.replace(paramPattern, String(actualValue));
+        }
+      });
+    }
+
+    // Handle any remaining unsubstituted path parameters with default values
+    path = path.replace(/{id}/g, '1');
+    path = path.replace(/{userId}/g, '1');
+    path = path.replace(/{productId}/g, '1');
+    path = path.replace(/{todoId}/g, '1');
+
+    const baseUrl = this.baseUrl.endsWith('/') ? this.baseUrl.slice(0, -1) : this.baseUrl;
     return `${baseUrl}${path}`;
   }
 

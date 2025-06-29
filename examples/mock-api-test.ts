@@ -95,7 +95,7 @@ async function runMockApiTests() {
     const regressionService = new RegressionService();
 
     // Load OpenAPI schema
-    const schemaPath = path.join(__dirname, 'mock-api/generated-schema.json');
+    const schemaPath = path.join(__dirname, 'mock-api/openapi.json');
     console.log(`📄 Loading API schema from ${schemaPath}...`);
 
     const schema = await engine.loadApiSchema(schemaPath);

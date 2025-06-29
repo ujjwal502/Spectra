@@ -7,10 +7,11 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 // Try to import Spectra components, fallback to mock if not available
-let TestEngine, SpecGenerator;
+let TestEngine, EnhancedSpecIntegration;
 try {
   TestEngine = require('../core/engine').TestEngine;
-  SpecGenerator = require('../generators/specGenerator').SpecGenerator;
+  EnhancedSpecIntegration =
+    require('../integrations/enhancedSpecIntegration').EnhancedSpecIntegration;
 } catch (error) {
   console.warn('Spectra components not found, using mock implementations for demo');
   // Mock implementations for demo purposes
@@ -144,21 +145,21 @@ try {
     }
   };
 
-  SpecGenerator = class MockSpecGenerator {
+  EnhancedSpecIntegration = class MockEnhancedSpecIntegration {
     constructor(config) {
       this.config = config;
     }
 
-    async generateFromCode(sourcePath) {
-      // Mock OpenAPI spec generation
+    async generateSpec(sourcePath) {
+      // Mock enhanced OpenAPI spec generation
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       return {
         openapi: '3.0.0',
         info: {
-          title: 'Mock API',
+          title: 'Mock API (Enhanced)',
           version: '1.0.0',
-          description: 'Generated from source code analysis',
+          description: 'Generated from enhanced AI-powered analysis',
         },
         servers: [{ url: this.config.baseUrl }],
         paths: {

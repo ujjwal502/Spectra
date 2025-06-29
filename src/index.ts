@@ -4,11 +4,65 @@ import dotenv from 'dotenv';
 import { TestEngine, RunnerType } from './core/engine';
 import { TestCase, TestResult, SpecGeneratorOptions } from './types';
 import { RegressionService } from './services/regressionService';
-import { SpecGenerator } from './generators/specGenerator';
+import { EnhancedSpecIntegration } from './integrations/enhancedSpecIntegration';
 import { HtmlReportService } from './services/htmlReportService';
 import { EnhancedTestResult } from './types/nonfunctional';
+import { EnhancedTestGenerator } from './agents/enhancedTestGenerator';
+import { IntelligentTestRunner } from './runners/intelligentTestRunner';
 
 dotenv.config();
+
+// Helper functions for enhanced commands
+
+function extractEndpointsFromSchema(
+  apiSchema: any,
+): Array<{ path: string; method: string; operation: any }> {
+  const endpoints: Array<{ path: string; method: string; operation: any }> = [];
+
+  if (apiSchema.paths) {
+    for (const [path, pathItem] of Object.entries(apiSchema.paths)) {
+      const methods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'];
+
+      for (const method of methods) {
+        if ((pathItem as any)[method]) {
+          endpoints.push({
+            path,
+            method,
+            operation: (pathItem as any)[method],
+          });
+        }
+      }
+    }
+  }
+
+  return endpoints;
+}
+
+function convertToGherkinFile(feature: any): string {
+  let content = `Feature: ${feature.title}\n`;
+
+  if (feature.description) {
+    content += `  ${feature.description}\n`;
+  }
+
+  content += '\n';
+
+  for (const scenario of feature.scenarios) {
+    if (scenario.tags && scenario.tags.length > 0) {
+      content += `  @${scenario.tags.join(' @')}\n`;
+    }
+
+    content += `  Scenario: ${scenario.title}\n`;
+
+    for (const step of scenario.steps) {
+      content += `    ${step.keyword} ${step.text}\n`;
+    }
+
+    content += '\n';
+  }
+
+  return content;
+}
 
 /**
  * Format test results as a console report
@@ -182,9 +236,9 @@ async function main(): Promise<void> {
           // Generate OpenAPI spec directly from the source code with options
           console.log(`\n🔄 Generating OpenAPI spec from ${sourcePath}...`);
 
-          // Create SpecGenerator with options
-          const specGeneratorWithOptions = new SpecGenerator(options);
-          const openApiSpec = await specGeneratorWithOptions.generateFromCode(sourcePath);
+          // Create Enhanced Spec Integration with options
+          const enhancedSpecIntegration = new EnhancedSpecIntegration(options);
+          const openApiSpec = await enhancedSpecIntegration.generateSpec(sourcePath);
 
           // Save OpenAPI spec to file
           fs.writeFileSync(outputPath, JSON.stringify(openApiSpec, null, 2), 'utf8');
@@ -374,6 +428,340 @@ async function main(): Promise<void> {
         break;
       }
 
+      case 'generate-tests-enhanced': {
+        const openApiSpecPath = processedArgs[1];
+        const outputDir = processedArgs[2] || './tests';
+
+        if (!openApiSpecPath) {
+          console.error('❌ OpenAPI spec path is required for generate-tests-enhanced command');
+          console.log(
+            'Usage: npm run dev generate-tests-enhanced <openapi-spec-path> [output-dir]',
+          );
+          process.exit(1);
+        }
+
+        if (!fs.existsSync(openApiSpecPath)) {
+          console.error(`❌ OpenAPI spec file not found: ${openApiSpecPath}`);
+          process.exit(1);
+        }
+
+        console.log('🧠 Enhanced Test Generation with LangGraph + LRASGen');
+        console.log(`📖 Using spec: ${openApiSpecPath}`);
+
+        try {
+          // Load OpenAPI specification
+          const apiSchema = JSON.parse(fs.readFileSync(openApiSpecPath, 'utf-8'));
+
+          // Create output directory
+          if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+          }
+
+          const testGenerator = new EnhancedTestGenerator();
+
+          // Extract endpoints from schema
+          const endpoints = extractEndpointsFromSchema(apiSchema);
+          console.log(`🎯 Generating tests for ${endpoints.length} endpoints...`);
+
+          for (const endpoint of endpoints) {
+            console.log(`\n📋 Processing: ${endpoint.method.toUpperCase()} ${endpoint.path}`);
+
+            const result = await testGenerator.generateTestSuite(apiSchema, endpoint);
+
+            // Save test cases
+            const sanitizedPath = endpoint.path.replace(/[/{}:]/g, '_');
+            const testFileName = `${endpoint.method}_${sanitizedPath}_tests.json`;
+            const testFilePath = path.join(outputDir, testFileName);
+
+            fs.writeFileSync(
+              testFilePath,
+              JSON.stringify(
+                {
+                  endpoint: `${endpoint.method.toUpperCase()} ${endpoint.path}`,
+                  testCases: result.testCases,
+                  gherkinFeatures: result.gherkinFeatures,
+                  executionPlan: result.executionPlan,
+                  coverage: result.coverage,
+                  recommendations: result.recommendations,
+                },
+                null,
+                2,
+              ),
+            );
+
+            // Save Gherkin features separately
+            const gherkinDir = path.join(outputDir, 'features');
+            if (!fs.existsSync(gherkinDir)) {
+              fs.mkdirSync(gherkinDir, { recursive: true });
+            }
+
+            for (const feature of result.gherkinFeatures) {
+              const featureFileName = `${sanitizedPath}_${feature.title.replace(/\s+/g, '_')}.feature`;
+              const featureContent = convertToGherkinFile(feature);
+              fs.writeFileSync(path.join(gherkinDir, featureFileName), featureContent);
+            }
+
+            console.log(`✅ Generated ${result.testCases.length} test cases`);
+            console.log(`🥒 Created ${result.gherkinFeatures.length} Gherkin features`);
+            console.log(`📈 Coverage: ${JSON.stringify(result.coverage)}`);
+          }
+
+          console.log(`\n🎉 Enhanced test generation completed! Tests saved to: ${outputDir}`);
+        } catch (error) {
+          console.error('❌ Enhanced test generation failed:', error);
+          process.exit(1);
+        }
+        break;
+      }
+
+      case 'execute-tests-intelligent': {
+        const testSuiteDir = processedArgs[1];
+        const baseUrl = processedArgs[2] || 'http://localhost:3000';
+        const outputDir = processedArgs[3] || './test-results';
+
+        if (!testSuiteDir) {
+          console.error(
+            '❌ Test suite directory is required for execute-tests-intelligent command',
+          );
+          console.log(
+            'Usage: npm run dev execute-tests-intelligent <test-suite-dir> [base-url] [output-dir]',
+          );
+          process.exit(1);
+        }
+
+        if (!fs.existsSync(testSuiteDir)) {
+          console.error(`❌ Test suite directory not found: ${testSuiteDir}`);
+          process.exit(1);
+        }
+
+        console.log('🧠 Intelligent Test Execution with AI Adaptation');
+        console.log(`📁 Test suite: ${testSuiteDir}`);
+        console.log(`🌐 Target URL: ${baseUrl}`);
+
+        try {
+          if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+          }
+
+          // Load test suites
+          const testFiles = fs
+            .readdirSync(testSuiteDir)
+            .filter((file) => file.endsWith('_tests.json'));
+
+          if (testFiles.length === 0) {
+            console.error('❌ No test files found in directory');
+            process.exit(1);
+          }
+
+          const intelligentRunner = new IntelligentTestRunner(baseUrl);
+
+          // Execute each test suite
+          for (const testFile of testFiles) {
+            console.log(`\n📋 Executing: ${testFile}`);
+
+            const testSuiteData = JSON.parse(
+              fs.readFileSync(path.join(testSuiteDir, testFile), 'utf-8'),
+            );
+
+            const result = await intelligentRunner.executeIntelligentTestSuite(
+              testSuiteData.testCases,
+              testSuiteData.executionPlan || { testOrder: ['functional', 'boundary', 'error'] },
+            );
+
+            // Save results
+            const resultFile = testFile.replace('_tests.json', '_results.json');
+            fs.writeFileSync(
+              path.join(outputDir, resultFile),
+              JSON.stringify(
+                {
+                  endpoint: testSuiteData.endpoint,
+                  executionTimestamp: new Date().toISOString(),
+                  summary: result.executionSummary,
+                  insights: result.insights,
+                  recommendations: result.recommendations,
+                  detailedResults: Array.from(result.results.entries()).map(([id, testResult]) => ({
+                    testId: id,
+                    ...testResult,
+                  })),
+                },
+                null,
+                2,
+              ),
+            );
+
+            console.log(`✅ Executed ${testSuiteData.testCases.length} tests`);
+            console.log(
+              `📊 Success rate: ${(result.executionSummary.successRate * 100).toFixed(2)}%`,
+            );
+            console.log(`🔍 Generated ${result.insights.length} insights`);
+          }
+
+          console.log(`\n🎉 Intelligent test execution completed! Results saved to: ${outputDir}`);
+        } catch (error) {
+          console.error('❌ Intelligent test execution failed:', error);
+          process.exit(1);
+        }
+        break;
+      }
+
+      case 'test-workflow-enhanced': {
+        const codebaseDir = processedArgs[1];
+        const baseUrl = processedArgs[2] || 'http://localhost:3000';
+        const outputDir = processedArgs[3] || './spectra-enhanced-tests';
+
+        if (!codebaseDir) {
+          console.error('❌ Codebase directory is required for test-workflow-enhanced command');
+          console.log(
+            'Usage: npm run dev test-workflow-enhanced <codebase-dir> [base-url] [output-dir]',
+          );
+          process.exit(1);
+        }
+
+        console.log('🚀 Enhanced Testing Workflow: Spec → Tests → Execution');
+        console.log(`📁 Codebase: ${codebaseDir}`);
+
+        try {
+          // Create output directory structure
+          const specsDir = path.join(outputDir, 'specs');
+          const testsDir = path.join(outputDir, 'tests');
+          const resultsDir = path.join(outputDir, 'results');
+
+          [outputDir, specsDir, testsDir, resultsDir].forEach((dir) => {
+            if (!fs.existsSync(dir)) {
+              fs.mkdirSync(dir, { recursive: true });
+            }
+          });
+
+          // Step 1: Generate enhanced OpenAPI specification
+          console.log('\n📋 Step 1: Generating enhanced OpenAPI specification...');
+          const integration = new EnhancedSpecIntegration({ baseUrl });
+          const specPath = path.join(specsDir, 'api-spec.json');
+          await integration.generateSpec(codebaseDir, specPath);
+
+          // Step 2: Generate comprehensive test cases
+          console.log('\n🧪 Step 2: Generating comprehensive test cases...');
+          const apiSchema = JSON.parse(fs.readFileSync(specPath, 'utf-8'));
+          const endpoints = extractEndpointsFromSchema(apiSchema);
+          const testGenerator = new EnhancedTestGenerator();
+
+          for (const endpoint of endpoints) {
+            const result = await testGenerator.generateTestSuite(apiSchema, endpoint);
+
+            const sanitizedPath = endpoint.path.replace(/[/{}:]/g, '_');
+            const testFileName = `${endpoint.method}_${sanitizedPath}_tests.json`;
+
+            fs.writeFileSync(
+              path.join(testsDir, testFileName),
+              JSON.stringify(
+                {
+                  endpoint: `${endpoint.method.toUpperCase()} ${endpoint.path}`,
+                  testCases: result.testCases,
+                  gherkinFeatures: result.gherkinFeatures,
+                  executionPlan: result.executionPlan,
+                  coverage: result.coverage,
+                  recommendations: result.recommendations,
+                },
+                null,
+                2,
+              ),
+            );
+          }
+
+          // Step 3: Execute with intelligent adaptation
+          console.log('\n🧠 Step 3: Executing tests with intelligent adaptation...');
+          const intelligentRunner = new IntelligentTestRunner(baseUrl);
+          const testFiles = fs.readdirSync(testsDir).filter((file) => file.endsWith('_tests.json'));
+
+          const overallResults = {
+            totalEndpoints: endpoints.length,
+            totalTests: 0,
+            totalPassed: 0,
+            totalFailed: 0,
+            insights: [] as string[],
+            recommendations: [] as string[],
+          };
+
+          for (const testFile of testFiles) {
+            const testSuiteData = JSON.parse(
+              fs.readFileSync(path.join(testsDir, testFile), 'utf-8'),
+            );
+
+            const result = await intelligentRunner.executeIntelligentTestSuite(
+              testSuiteData.testCases,
+              testSuiteData.executionPlan,
+            );
+
+            // Aggregate results
+            overallResults.totalTests += testSuiteData.testCases.length;
+            overallResults.totalPassed += result.executionSummary.passedTests;
+            overallResults.totalFailed += result.executionSummary.failedTests;
+            overallResults.insights.push(...result.insights);
+            overallResults.recommendations.push(...result.recommendations);
+
+            // Save individual results
+            const resultFile = testFile.replace('_tests.json', '_results.json');
+            fs.writeFileSync(
+              path.join(resultsDir, resultFile),
+              JSON.stringify(
+                {
+                  endpoint: testSuiteData.endpoint,
+                  executionTimestamp: new Date().toISOString(),
+                  summary: result.executionSummary,
+                  insights: result.insights,
+                  recommendations: result.recommendations,
+                  detailedResults: Array.from(result.results.entries()).map(([id, testResult]) => ({
+                    testId: id,
+                    ...testResult,
+                  })),
+                },
+                null,
+                2,
+              ),
+            );
+          }
+
+          // Save overall summary
+          const summaryPath = path.join(outputDir, 'workflow-summary.json');
+          fs.writeFileSync(
+            summaryPath,
+            JSON.stringify(
+              {
+                workflowCompletedAt: new Date().toISOString(),
+                codebaseAnalyzed: codebaseDir,
+                baseUrl,
+                results: overallResults,
+                successRate:
+                  overallResults.totalTests > 0
+                    ? overallResults.totalPassed / overallResults.totalTests
+                    : 0,
+                outputStructure: {
+                  specs: specsDir,
+                  tests: testsDir,
+                  results: resultsDir,
+                },
+              },
+              null,
+              2,
+            ),
+          );
+
+          console.log('\n🎉 Enhanced testing workflow completed successfully!');
+          console.log(`📊 Overall Results:`);
+          console.log(`   - Endpoints analyzed: ${overallResults.totalEndpoints}`);
+          console.log(`   - Tests generated: ${overallResults.totalTests}`);
+          console.log(`   - Tests passed: ${overallResults.totalPassed}`);
+          console.log(`   - Tests failed: ${overallResults.totalFailed}`);
+          console.log(
+            `   - Success rate: ${((overallResults.totalPassed / overallResults.totalTests) * 100).toFixed(2)}%`,
+          );
+          console.log(`📁 All results saved to: ${outputDir}`);
+        } catch (error) {
+          console.error('❌ Enhanced testing workflow failed:', error);
+          process.exit(1);
+        }
+        break;
+      }
+
       default:
         console.log(`
 API Testing Agent
@@ -384,6 +772,11 @@ Usage:
   npm run dev run <schema-path> <base-url> <results-path>
   npm run dev regression:baseline <schema-path> <base-url> <baseline-path>
   npm run dev regression:run <schema-path> <base-url> <baseline-path> <results-path>
+  
+Enhanced Commands:
+  npm run dev generate-tests-enhanced <openapi-spec-path> [output-dir]
+  npm run dev execute-tests-intelligent <test-suite-dir> [base-url] [output-dir]
+  npm run dev test-workflow-enhanced <codebase-dir> [base-url] [output-dir]
 
 Options:
   --no-group       Disable grouping endpoints by resource
@@ -394,13 +787,15 @@ Options:
 Note: 
 - AI-powered schema enhancement is automatically enabled when OPENAI_API_KEY is set in your environment
 - Non-functional testing (performance, security, reliability, load) is included in all test runs
+- Enhanced commands use LangGraph + LRASGen methodology for advanced test generation
 
 Examples:
   npm run dev generate-spec ./my-backend-code ./schemas/generated-api.json
   npm run dev generate ./schemas/petstore.json ./features
   npm run dev run ./schemas/petstore.json https://petstore.swagger.io/v2 ./results.json
-  npm run dev regression:baseline ./schemas/petstore.json https://petstore.swagger.io/v2 ./baseline.json
-  npm run dev regression:run ./schemas/petstore.json https://petstore.swagger.io/v2 ./baseline.json ./results.json
+  npm run dev generate-tests-enhanced ./schemas/openapi.json ./enhanced-tests
+  npm run dev execute-tests-intelligent ./enhanced-tests http://localhost:3000 ./results
+  npm run dev test-workflow-enhanced ./my-backend-code http://localhost:3000 ./complete-results
         `);
         break;
     }
