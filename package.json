@@ -40,7 +40,17 @@
     "enhanced:info": "ts-node src/cli/enhanced.ts info",
     "enhanced:check": "ts-node src/cli/enhanced.ts check-env",
     "enhanced:demo": "ts-node src/cli/enhanced.ts demo-enhanced",
-    "enhanced:generate": "ts-node src/cli/enhanced.ts generate-spec-enhanced"
+    "enhanced:generate": "ts-node src/cli/enhanced.ts generate-spec-enhanced",
+    "enhanced:dashboard": "ts-node src/index.ts generate-dashboard",
+    "demo:dashboard": "node examples/dashboard-demo.js",
+    "test:backend:enhanced": "npm run test:backend:enhanced:generate && npm run test:backend:enhanced:execute",
+    "test:backend:enhanced:generate": "ts-node src/index.ts generate-tests-enhanced examples/backend/openapi.json ./examples/backend/enhanced-tests",
+    "test:backend:enhanced:execute": "ts-node src/index.ts execute-tests-intelligent ./examples/backend/enhanced-tests http://localhost:3000/api",
+    "test:backend:enhanced:workflow": "ts-node src/index.ts test-workflow-enhanced ./examples/backend http://localhost:3000 ./examples/backend/spectra-enhanced-tests",
+    "test:mock-api:enhanced": "npm run test:mock-api:enhanced:generate && npm run test:mock-api:enhanced:execute",
+    "test:mock-api:enhanced:generate": "ts-node src/index.ts generate-tests-enhanced examples/mock-api/openapi.json ./examples/mock-api/enhanced-tests",
+    "test:mock-api:enhanced:execute": "ts-node src/index.ts execute-tests-intelligent ./examples/mock-api/enhanced-tests http://localhost:8080",
+    "test:mock-api:enhanced:workflow": "ts-node src/index.ts test-workflow-enhanced ./examples/mock-api http://localhost:8080 ./examples/mock-api/spectra-enhanced-tests"
   },
   "keywords": [
     "api",
