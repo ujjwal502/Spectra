@@ -4,6 +4,8 @@ import { EnhancedTestGenerator } from '../agents/enhancedTestGenerator';
 import { IntelligentTestRunner } from '../runners/intelligentTestRunner';
 import path from 'path';
 import * as fs from 'fs';
+import { ModernDashboardService } from '../services/modernDashboardService';
+// LangGraph Testing Agent will be imported dynamically
 
 export function addEnhancedCommands(program: Command): void {
   program
@@ -117,15 +119,36 @@ export function addEnhancedCommands(program: Command): void {
 
   program
     .command('generate-tests-enhanced')
-    .description('Generate comprehensive test cases using LangGraph + LRASGen methodology')
-    .argument('<openApiSpecPath>', 'Path to OpenAPI specification file')
-    .option('--endpoint <endpoint>', 'Generate tests for specific endpoint (optional)')
-    .option('--method <method>', 'HTTP method for specific endpoint')
-    .option('--output <outputDir>', 'Output directory for test files', './tests')
+    .description('Generate comprehensive test suites using LangGraph + LRASGen methodology')
+    .argument('<openApiSpecPath>', 'Path to OpenAPI/Swagger specification file')
+    .option('--output <outputDir>', 'Output directory for generated tests', 'tests')
+    .option('--endpoint <endpoint>', 'Generate tests for specific endpoint only')
     .action(async (openApiSpecPath: string, options?: any) => {
       try {
         console.log('🧠 Enhanced Test Generation with LangGraph + LRASGen');
         console.log(`📖 Using spec: ${openApiSpecPath}`);
+
+        // Handle output directory correctly - relative to current working directory if starts with ./
+        let outputDir: string;
+        if (options?.output) {
+          if (path.isAbsolute(options.output)) {
+            // Absolute path - use as is
+            outputDir = options.output;
+          } else if (options.output.startsWith('./') || options.output.startsWith('../')) {
+            // Relative to current working directory
+            outputDir = path.resolve(options.output);
+          } else {
+            // Relative to schema directory
+            const schemaDir = path.dirname(path.resolve(openApiSpecPath));
+            outputDir = path.join(schemaDir, options.output);
+          }
+        } else {
+          // Default: relative to schema directory
+          const schemaDir = path.dirname(path.resolve(openApiSpecPath));
+          outputDir = path.join(schemaDir, 'tests');
+        }
+
+        console.log(`📁 Tests will be saved to: ${outputDir}`);
 
         // Load OpenAPI specification
         if (!fs.existsSync(openApiSpecPath)) {
@@ -133,7 +156,6 @@ export function addEnhancedCommands(program: Command): void {
         }
 
         const apiSchema = JSON.parse(fs.readFileSync(openApiSpecPath, 'utf-8'));
-        const outputDir = options?.output || './tests';
 
         // Create output directory
         if (!fs.existsSync(outputDir)) {
@@ -146,17 +168,11 @@ export function addEnhancedCommands(program: Command): void {
         const endpoints = extractEndpointsFromSchema(apiSchema);
 
         let targetEndpoints = endpoints;
-        if (options?.endpoint && options?.method) {
-          targetEndpoints = endpoints.filter(
-            (ep) =>
-              ep.path === options.endpoint &&
-              ep.method.toLowerCase() === options.method.toLowerCase(),
-          );
+        if (options?.endpoint) {
+          targetEndpoints = endpoints.filter((ep) => ep.path === options.endpoint);
 
           if (targetEndpoints.length === 0) {
-            throw new Error(
-              `Endpoint not found: ${options.method.toUpperCase()} ${options.endpoint}`,
-            );
+            throw new Error(`Endpoint not found: ${options.endpoint}`);
           }
         }
 
@@ -214,26 +230,54 @@ export function addEnhancedCommands(program: Command): void {
 
   program
     .command('execute-tests-intelligent')
-    .description('Execute tests with intelligent adaptation using AI decision making')
-    .argument('<testSuiteDir>', 'Directory containing test suite files')
-    .option('--base-url <baseUrl>', 'Base URL for API under test', 'http://localhost:3000')
-    .option('--disable-adaptation', 'Disable AI-driven adaptation during execution')
-    .option('--failure-threshold <threshold>', 'Failure threshold for adaptive decisions', '0.3')
-    .option('--output <outputDir>', 'Output directory for results', './test-results')
+    .description(
+      'Execute tests using intelligent adaptive test runner with AI-driven decision making',
+    )
+    .argument('<testSuiteDir>', 'Directory containing enhanced test suites')
+    .option('--base-url <baseUrl>', 'Base URL for the API under test', 'http://localhost:3000')
+    .option('--output <outputDir>', 'Output directory for results', 'test-results')
+    .option('--enable-adaptation', 'Enable AI-driven test adaptation', true)
+    .option('--failure-threshold <threshold>', 'Maximum failure threshold (0-1)', '0.3')
     .action(async (testSuiteDir: string, options?: any) => {
       try {
-        console.log('🧠 Intelligent Test Execution with AI Adaptation');
-        console.log(`📁 Test suite: ${testSuiteDir}`);
-        console.log(`🌐 Target URL: ${options?.baseUrl || 'http://localhost:3000'}`);
+        const { baseUrl = 'http://localhost:3000', output = 'test-results' } = options || {};
+
+        console.log('🧠 Intelligent Test Execution with AI-powered adaptation');
+        console.log(`📁 Test Suites: ${testSuiteDir}`);
+        console.log(`🌐 Base URL: ${baseUrl}`);
+
+        // Handle output directory correctly - relative to current working directory if starts with ./
+        let outputDir: string;
+        if (output) {
+          if (path.isAbsolute(output)) {
+            // Absolute path - use as is
+            outputDir = output;
+          } else if (output.startsWith('./') || output.startsWith('../')) {
+            // Relative to current working directory
+            outputDir = path.resolve(output);
+          } else {
+            // Relative to testSuiteDir parent directory
+            const testSuiteParentDir = path.dirname(path.resolve(testSuiteDir));
+            outputDir = path.join(testSuiteParentDir, output);
+          }
+        } else {
+          // Default: relative to testSuiteDir parent directory
+          const testSuiteParentDir = path.dirname(path.resolve(testSuiteDir));
+          outputDir = path.join(testSuiteParentDir, 'test-results');
+        }
+
+        console.log(`📊 Results will be saved to: ${outputDir}`);
 
         if (!fs.existsSync(testSuiteDir)) {
           throw new Error(`Test suite directory not found: ${testSuiteDir}`);
         }
 
-        const outputDir = options?.output || './test-results';
+        // Create output directory if it doesn't exist
         if (!fs.existsSync(outputDir)) {
           fs.mkdirSync(outputDir, { recursive: true });
         }
+
+        const intelligentRunner = new IntelligentTestRunner(baseUrl);
 
         // Load test suites
         const testFiles = fs
@@ -243,8 +287,6 @@ export function addEnhancedCommands(program: Command): void {
         if (testFiles.length === 0) {
           throw new Error('No test files found in directory');
         }
-
-        const intelligentRunner = new IntelligentTestRunner(options?.baseUrl);
 
         // Execute each test suite
         for (const testFile of testFiles) {
@@ -288,6 +330,15 @@ export function addEnhancedCommands(program: Command): void {
         }
 
         console.log(`\n🎉 Intelligent test execution completed! Results saved to: ${outputDir}`);
+
+        // Generate modern dashboard
+        console.log('\n🎨 Generating modern dashboard...');
+        const dashboardService = new ModernDashboardService();
+        const codebaseDir = path.dirname(path.resolve(testSuiteDir));
+        dashboardService.generateDashboard(codebaseDir, {
+          title: 'Spectra Test Execution Results',
+          theme: 'light',
+        });
       } catch (error) {
         console.error('❌ Intelligent test execution failed:', error);
         process.exit(1);
@@ -297,18 +348,40 @@ export function addEnhancedCommands(program: Command): void {
   program
     .command('test-workflow-enhanced')
     .description(
-      'Complete enhanced testing workflow: spec generation → test generation → intelligent execution',
+      'Complete enhanced testing workflow: Spec → Tests → Execution with LangGraph + LRASGen',
     )
-    .argument('<codebaseDir>', 'Root directory of the codebase to analyze and test')
+    .argument('<codebaseDir>', 'Root directory of the codebase to analyze')
     .option('--base-url <baseUrl>', 'Base URL for the API under test', 'http://localhost:3000')
-    .option('--output <outputDir>', 'Output directory for all results', './spectra-enhanced-tests')
+    .option('--output <outputDir>', 'Output directory for all results', 'spectra-enhanced-tests')
     .action(async (codebaseDir: string, options?: any) => {
       try {
+        const { baseUrl = 'http://localhost:3000', output = 'spectra-enhanced-tests' } =
+          options || {};
+
         console.log('🚀 Enhanced Testing Workflow: Spec → Tests → Execution');
         console.log(`📁 Codebase: ${codebaseDir}`);
+        console.log(`🌐 Base URL: ${baseUrl}`);
 
-        const outputDir = options?.output || './spectra-enhanced-tests';
-        const baseUrl = options?.baseUrl || 'http://localhost:3000';
+        // Handle output directory correctly - relative to current working directory if starts with ./
+        const resolvedCodebaseDir = path.resolve(codebaseDir);
+        let outputDir: string;
+        if (output) {
+          if (path.isAbsolute(output)) {
+            // Absolute path - use as is
+            outputDir = output;
+          } else if (output.startsWith('./') || output.startsWith('../')) {
+            // Relative to current working directory
+            outputDir = path.resolve(output);
+          } else {
+            // Relative to codebase directory
+            outputDir = path.join(resolvedCodebaseDir, output);
+          }
+        } else {
+          // Default: relative to codebase directory
+          outputDir = path.join(resolvedCodebaseDir, 'spectra-enhanced-tests');
+        }
+
+        console.log(`📁 Results will be saved to: ${outputDir}`);
 
         // Create output directory structure
         const specsDir = path.join(outputDir, 'specs');
@@ -442,9 +515,159 @@ export function addEnhancedCommands(program: Command): void {
           `   - Success rate: ${((overallResults.totalPassed / overallResults.totalTests) * 100).toFixed(2)}%`,
         );
         console.log(`📁 All results saved to: ${outputDir}`);
+
+        // Generate comprehensive modern dashboard
+        console.log('\n🎨 Generating comprehensive modern dashboard...');
+        const dashboardService = new ModernDashboardService();
+        dashboardService.generateDashboard(resolvedCodebaseDir, {
+          title: 'Spectra Enhanced Testing Dashboard',
+          theme: 'light',
+        });
+
+        console.log(
+          `🌐 Open ${path.join(resolvedCodebaseDir, 'spectra-dashboard', 'index.html')} to view the dashboard`,
+        );
       } catch (error) {
         console.error('❌ Enhanced testing workflow failed:', error);
         process.exit(1);
+      }
+    });
+
+  program
+    .command('generate-dashboard')
+    .description('Generate enhanced HTML dashboard from existing test results and enhanced tests')
+    .argument('<codebaseDir>', 'Root directory of the codebase containing test results')
+    .option('--title <title>', 'Dashboard title', 'Spectra Enhanced Dashboard')
+    .option('--include-tests', 'Include enhanced test suites in dashboard', true)
+    .option('--include-results', 'Include test execution results in dashboard', true)
+    .action(async (codebaseDir: string, options?: any) => {
+      try {
+        console.log('🎨 Generating enhanced HTML dashboard...');
+        console.log(`📁 Scanning: ${codebaseDir}`);
+
+        const resolvedCodebaseDir = path.resolve(codebaseDir);
+
+        const dashboardService = new ModernDashboardService();
+        dashboardService.generateDashboard(resolvedCodebaseDir, {
+          title: options?.title || 'Spectra Enhanced Dashboard',
+          theme: 'light',
+        });
+
+        const dashboardPath = path.join(resolvedCodebaseDir, 'spectra-dashboard', 'index.html');
+        console.log(`\n🌐 Dashboard generated successfully!`);
+        console.log(`🔗 Open: ${dashboardPath}`);
+        console.log(
+          `📱 Or run: open "${dashboardPath}" (macOS) or start "${dashboardPath}" (Windows)`,
+        );
+      } catch (error) {
+        console.error('❌ Dashboard generation failed:', error);
+        process.exit(1);
+      }
+    });
+
+  program
+    .command('run-langgraph-intelligent-testing')
+    .description('Run LangGraph intelligent testing on a given API spec')
+    .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
+    .action(async (apiSpecPath: string) => {
+      try {
+        console.log('🚀 [LANGGRAPH] Starting LangGraph intelligent testing...');
+        console.log('📄 API Spec:', apiSpecPath);
+
+        // Import the LangGraph testing agent
+        const { LangGraphTestingAgent } = await import('../agents/langGraphTestingAgent');
+
+        // Load and parse OpenAPI spec
+        if (!fs.existsSync(apiSpecPath)) {
+          throw new Error(`API spec file not found: ${apiSpecPath}`);
+        }
+
+        const specContent = fs.readFileSync(apiSpecPath, 'utf-8');
+        const apiSpec = JSON.parse(specContent);
+
+        console.log('🧠 [LANGGRAPH] Initializing intelligent testing agent...');
+        const agent = new LangGraphTestingAgent();
+
+        console.log('🎯 [LANGGRAPH] Executing intelligent testing workflow...');
+
+        // Determine output directory based on API spec path
+        const path = await import('path');
+        const outputDir = path.dirname(apiSpecPath);
+
+        const result = await agent.executeIntelligentTesting(apiSpec, outputDir);
+
+        // Display results
+        console.log('\n🎉 [LANGGRAPH] Intelligent testing completed!');
+        console.log('═══════════════════════════════════════════════════════════');
+
+        console.log(`📊 Phase: ${result.currentPhase}`);
+        console.log(`🔍 System Map:
+        📍 Endpoints: ${result.systemMap?.endpoints.length || 0}
+        📋 Schemas: ${result.systemMap?.schemas.length || 0}
+        🔄 Data Flows: ${result.systemMap?.dataFlow.length || 0}
+        🔗 Dependencies: ${result.systemMap?.dependencies.length || 0}`);
+
+        console.log(`🤖 Test Scenarios: ${result.testScenarios.length}`);
+        console.log(`🥒 Gherkin Features: ${result.gherkinFeatures.length}`);
+        console.log(
+          `📋 BDD Scenarios: ${result.gherkinFeatures.reduce((sum, f) => sum + f.scenarios.length, 0)}`,
+        );
+        console.log(`✅ Test Results: ${result.testResults.length}`);
+
+        if (result.analysis) {
+          console.log(`📈 Success Rate: ${result.analysis.overallSuccessRate}%`);
+          console.log(`⚠️  Critical Issues: ${result.analysis.criticalIssues.length}`);
+          console.log(`🔍 Patterns Found: ${result.analysis.patterns.length}`);
+          console.log(`📊 Risk Level: ${result.analysis.riskAssessment.level}`);
+        }
+
+        console.log(`💡 Recommendations: ${result.recommendations.length}`);
+
+        // Show detailed test results
+        console.log('\n📋 Test Results Breakdown:');
+        console.log('═══════════════════════════════════════════════════════════');
+
+        const resultsByType = result.testResults.reduce(
+          (acc, test) => {
+            const scenario = result.testScenarios.find((s) => s.id === test.scenarioId);
+            const type = scenario?.type || 'unknown';
+            if (!acc[type]) acc[type] = { total: 0, passed: 0 };
+            acc[type].total++;
+            if (test.success) acc[type].passed++;
+            return acc;
+          },
+          {} as Record<string, { total: number; passed: number }>,
+        );
+
+        Object.entries(resultsByType).forEach(([type, stats]) => {
+          const successRate = ((stats.passed / stats.total) * 100).toFixed(1);
+          console.log(`${type.toUpperCase()}: ${stats.passed}/${stats.total} (${successRate}%)`);
+        });
+
+        // Show insights
+        const allInsights = result.testResults.flatMap((r) => r.insights);
+        if (allInsights.length > 0) {
+          console.log('\n💡 Key Insights:');
+          console.log('═══════════════════════════════════════════════════════════');
+          [...new Set(allInsights)].slice(0, 5).forEach((insight, i) => {
+            console.log(`${i + 1}. ${insight}`);
+          });
+        }
+
+        // Show recommendations
+        if (result.recommendations.length > 0) {
+          console.log('\n🔧 Recommendations:');
+          console.log('═══════════════════════════════════════════════════════════');
+          result.recommendations.slice(0, 5).forEach((rec, i) => {
+            console.log(`${i + 1}. ${rec}`);
+          });
+        }
+
+        console.log('\n📁 [GHERKIN] Gherkin features exported to features/ directory');
+        console.log('\n🎯 [LANGGRAPH] LangGraph intelligent testing completed successfully!');
+      } catch (error) {
+        console.error('❌ [LANGGRAPH] Error running LangGraph testing:', error);
+        throw error;
       }
     });
 }

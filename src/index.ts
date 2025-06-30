@@ -1,12 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import { TestEngine, RunnerType } from './core/engine';
-import { TestCase, TestResult, SpecGeneratorOptions } from './types';
+import { TestEngine } from './core/engine';
+import { TestResult, SpecGeneratorOptions } from './types';
 import { RegressionService } from './services/regressionService';
 import { EnhancedSpecIntegration } from './integrations/enhancedSpecIntegration';
-import { HtmlReportService } from './services/htmlReportService';
-import { EnhancedTestResult } from './types/nonfunctional';
+import { ModernDashboardService } from './services/modernDashboardService';
 import { EnhancedTestGenerator } from './agents/enhancedTestGenerator';
 import { IntelligentTestRunner } from './runners/intelligentTestRunner';
 
@@ -123,13 +122,16 @@ function saveTestResults(results: Map<string, TestResult>, outputPath: string): 
 }
 
 /**
- * Generate HTML reports for test results in the project directory
+ * Generate modern dashboard for test results in the project directory
  * @param results Test results
  * @param outputDir Directory where the project being tested is located
  */
-function generateHtmlReports(results: Map<string, TestResult>, outputDir: string): void {
-  const htmlReportService = new HtmlReportService();
-  htmlReportService.generateTestReport(results, outputDir);
+function generateModernDashboard(results: Map<string, TestResult>, outputDir: string): void {
+  const dashboardService = new ModernDashboardService();
+  dashboardService.generateDashboard(outputDir, {
+    title: 'Spectra Test Results Dashboard',
+    theme: 'light',
+  });
 }
 
 /**
@@ -279,8 +281,14 @@ async function main(): Promise<void> {
       case 'run': {
         const schemaPath = processedArgs[1] || 'api-schema.json';
         const baseUrl = processedArgs[2] || process.env.API_BASE_URL || 'http://localhost:3000';
-        const resultsPath = processedArgs[3] || 'test-results.json';
         const projectDir = path.dirname(schemaPath);
+
+        // Make results path relative to schema directory
+        const resultsPath = processedArgs[3]
+          ? path.isAbsolute(processedArgs[3])
+            ? processedArgs[3]
+            : path.join(projectDir, processedArgs[3])
+          : path.join(projectDir, 'test-results.json');
 
         console.log(`Loading API schema from ${schemaPath}...`);
         await engine.loadApiSchema(schemaPath);
@@ -289,6 +297,7 @@ async function main(): Promise<void> {
         const testCases = await engine.generateTestCases();
 
         console.log(`Running tests against ${baseUrl}...`);
+        console.log(`📁 Results will be saved to: ${projectDir}`);
 
         // Select endpoints for non-functional testing (all endpoints will receive functional tests)
         console.log('🔬 Executing non-functional tests...');
@@ -343,8 +352,8 @@ async function main(): Promise<void> {
         fs.writeFileSync(nfResultsPath, JSON.stringify(resultsArray, null, 2), 'utf8');
         console.log(`Non-functional test results saved to ${nfResultsPath}`);
 
-        // Generate HTML reports
-        generateHtmlReports(functionalResults, projectDir);
+        // Generate modern dashboard
+        generateModernDashboard(functionalResults, projectDir);
 
         break;
       }
@@ -352,9 +361,19 @@ async function main(): Promise<void> {
       case 'regression:run': {
         const schemaPath = processedArgs[1] || 'api-schema.json';
         const baseUrl = processedArgs[2] || process.env.API_BASE_URL || 'http://localhost:3000';
-        const baselinePath = processedArgs[3] || 'regression-baseline.json';
-        const resultsPath = processedArgs[4] || 'test-results.json';
         const projectDir = path.dirname(schemaPath);
+
+        // Make baseline and results paths relative to schema directory
+        const baselinePath = processedArgs[3]
+          ? path.isAbsolute(processedArgs[3])
+            ? processedArgs[3]
+            : path.join(projectDir, processedArgs[3])
+          : path.join(projectDir, 'regression-baseline.json');
+        const resultsPath = processedArgs[4]
+          ? path.isAbsolute(processedArgs[4])
+            ? processedArgs[4]
+            : path.join(projectDir, processedArgs[4])
+          : path.join(projectDir, 'test-results.json');
 
         console.log(`Loading API schema from ${schemaPath}...`);
         await engine.loadApiSchema(schemaPath);
@@ -370,8 +389,8 @@ async function main(): Promise<void> {
         saveTestResults(currentResults, resultsPath);
         console.log(`Test results saved to ${resultsPath}`);
 
-        // Generate HTML reports
-        generateHtmlReports(currentResults, projectDir);
+        // Generate modern dashboard
+        generateModernDashboard(currentResults, projectDir);
 
         // Load baseline for regression comparison
         console.log(`Loading regression baseline from ${baselinePath}...`);
@@ -405,8 +424,14 @@ async function main(): Promise<void> {
       case 'regression:baseline': {
         const schemaPath = processedArgs[1] || 'api-schema.json';
         const baseUrl = processedArgs[2] || process.env.API_BASE_URL || 'http://localhost:3000';
-        const baselinePath = processedArgs[3] || 'regression-baseline.json';
         const projectDir = path.dirname(schemaPath);
+
+        // Make baseline path relative to schema directory
+        const baselinePath = processedArgs[3]
+          ? path.isAbsolute(processedArgs[3])
+            ? processedArgs[3]
+            : path.join(projectDir, processedArgs[3])
+          : path.join(projectDir, 'regression-baseline.json');
 
         console.log(`Loading API schema from ${schemaPath}...`);
         await engine.loadApiSchema(schemaPath);
@@ -419,8 +444,8 @@ async function main(): Promise<void> {
 
         console.log(formatTestResults(results));
 
-        // Generate HTML reports
-        generateHtmlReports(results, projectDir);
+        // Generate modern dashboard
+        generateModernDashboard(results, projectDir);
 
         // Save as regression baseline
         regressionService.saveBaseline(results, baselinePath);
@@ -430,7 +455,27 @@ async function main(): Promise<void> {
 
       case 'generate-tests-enhanced': {
         const openApiSpecPath = processedArgs[1];
-        const outputDir = processedArgs[2] || './tests';
+
+        // Handle output directory correctly - relative to current working directory if starts with ./
+        // or relative to schema directory for other relative paths
+        let outputDir: string;
+        if (processedArgs[2]) {
+          if (path.isAbsolute(processedArgs[2])) {
+            // Absolute path - use as is
+            outputDir = processedArgs[2];
+          } else if (processedArgs[2].startsWith('./') || processedArgs[2].startsWith('../')) {
+            // Relative to current working directory
+            outputDir = path.resolve(processedArgs[2]);
+          } else {
+            // Relative to schema directory
+            const schemaDir = path.dirname(path.resolve(openApiSpecPath));
+            outputDir = path.join(schemaDir, processedArgs[2]);
+          }
+        } else {
+          // Default: relative to schema directory
+          const schemaDir = path.dirname(path.resolve(openApiSpecPath));
+          outputDir = path.join(schemaDir, 'tests');
+        }
 
         if (!openApiSpecPath) {
           console.error('❌ OpenAPI spec path is required for generate-tests-enhanced command');
@@ -517,7 +562,26 @@ async function main(): Promise<void> {
       case 'execute-tests-intelligent': {
         const testSuiteDir = processedArgs[1];
         const baseUrl = processedArgs[2] || 'http://localhost:3000';
-        const outputDir = processedArgs[3] || './test-results';
+
+        // Handle output directory correctly - relative to current working directory if starts with ./
+        let outputDir: string;
+        if (processedArgs[3]) {
+          if (path.isAbsolute(processedArgs[3])) {
+            // Absolute path - use as is
+            outputDir = processedArgs[3];
+          } else if (processedArgs[3].startsWith('./') || processedArgs[3].startsWith('../')) {
+            // Relative to current working directory
+            outputDir = path.resolve(processedArgs[3]);
+          } else {
+            // Relative to testSuiteDir parent directory
+            const testSuiteParentDir = path.dirname(path.resolve(testSuiteDir));
+            outputDir = path.join(testSuiteParentDir, processedArgs[3]);
+          }
+        } else {
+          // Default: relative to testSuiteDir parent directory
+          const testSuiteParentDir = path.dirname(path.resolve(testSuiteDir));
+          outputDir = path.join(testSuiteParentDir, 'test-results');
+        }
 
         if (!testSuiteDir) {
           console.error(
@@ -529,14 +593,10 @@ async function main(): Promise<void> {
           process.exit(1);
         }
 
-        if (!fs.existsSync(testSuiteDir)) {
-          console.error(`❌ Test suite directory not found: ${testSuiteDir}`);
-          process.exit(1);
-        }
-
-        console.log('🧠 Intelligent Test Execution with AI Adaptation');
-        console.log(`📁 Test suite: ${testSuiteDir}`);
-        console.log(`🌐 Target URL: ${baseUrl}`);
+        console.log('🧠 Intelligent Test Execution with AI-powered adaptation');
+        console.log(`📁 Test Suites: ${testSuiteDir}`);
+        console.log(`🌐 Base URL: ${baseUrl}`);
+        console.log(`📊 Results will be saved to: ${outputDir}`);
 
         try {
           if (!fs.existsSync(outputDir)) {
@@ -597,6 +657,15 @@ async function main(): Promise<void> {
           }
 
           console.log(`\n🎉 Intelligent test execution completed! Results saved to: ${outputDir}`);
+
+          // Generate modern dashboard
+          console.log('\n🎨 Generating modern dashboard...');
+          const dashboardService = new ModernDashboardService();
+          const codebaseDir = path.dirname(path.resolve(testSuiteDir));
+          dashboardService.generateDashboard(codebaseDir, {
+            title: 'Spectra Test Execution Results',
+            theme: 'light',
+          });
         } catch (error) {
           console.error('❌ Intelligent test execution failed:', error);
           process.exit(1);
@@ -607,7 +676,25 @@ async function main(): Promise<void> {
       case 'test-workflow-enhanced': {
         const codebaseDir = processedArgs[1];
         const baseUrl = processedArgs[2] || 'http://localhost:3000';
-        const outputDir = processedArgs[3] || './spectra-enhanced-tests';
+
+        // Handle output directory correctly - relative to current working directory if starts with ./
+        const resolvedCodebaseDir = path.resolve(codebaseDir);
+        let outputDir: string;
+        if (processedArgs[3]) {
+          if (path.isAbsolute(processedArgs[3])) {
+            // Absolute path - use as is
+            outputDir = processedArgs[3];
+          } else if (processedArgs[3].startsWith('./') || processedArgs[3].startsWith('../')) {
+            // Relative to current working directory
+            outputDir = path.resolve(processedArgs[3]);
+          } else {
+            // Relative to codebase directory
+            outputDir = path.join(resolvedCodebaseDir, processedArgs[3]);
+          }
+        } else {
+          // Default: relative to codebase directory
+          outputDir = path.join(resolvedCodebaseDir, 'spectra-enhanced-tests');
+        }
 
         if (!codebaseDir) {
           console.error('❌ Codebase directory is required for test-workflow-enhanced command');
@@ -619,6 +706,8 @@ async function main(): Promise<void> {
 
         console.log('🚀 Enhanced Testing Workflow: Spec → Tests → Execution');
         console.log(`📁 Codebase: ${codebaseDir}`);
+        console.log(`🌐 Base URL: ${baseUrl}`);
+        console.log(`📁 Results will be saved to: ${outputDir}`);
 
         try {
           // Create output directory structure
@@ -755,8 +844,54 @@ async function main(): Promise<void> {
             `   - Success rate: ${((overallResults.totalPassed / overallResults.totalTests) * 100).toFixed(2)}%`,
           );
           console.log(`📁 All results saved to: ${outputDir}`);
+
+          // Generate comprehensive modern dashboard
+          console.log('\n🎨 Generating comprehensive modern dashboard...');
+          const dashboardService = new ModernDashboardService();
+          dashboardService.generateDashboard(resolvedCodebaseDir, {
+            title: 'Spectra Enhanced Testing Dashboard',
+            theme: 'light',
+          });
+
+          console.log(
+            `🌐 Open ${path.join(resolvedCodebaseDir, 'spectra-dashboard', 'index.html')} to view the dashboard`,
+          );
         } catch (error) {
           console.error('❌ Enhanced testing workflow failed:', error);
+          process.exit(1);
+        }
+        break;
+      }
+
+      case 'generate-dashboard': {
+        const codebaseDir = processedArgs[1];
+
+        if (!codebaseDir) {
+          console.error('❌ Codebase directory is required for generate-dashboard command');
+          console.log('Usage: npm run dev generate-dashboard <codebase-dir> [options]');
+          process.exit(1);
+        }
+
+        console.log('🎨 Generating enhanced HTML dashboard...');
+        console.log(`📁 Scanning: ${codebaseDir}`);
+
+        try {
+          const resolvedCodebaseDir = path.resolve(codebaseDir);
+
+          const dashboardService = new ModernDashboardService();
+          dashboardService.generateDashboard(resolvedCodebaseDir, {
+            title: 'Spectra Enhanced Dashboard',
+            theme: 'light',
+          });
+
+          const dashboardPath = path.join(resolvedCodebaseDir, 'spectra-dashboard', 'index.html');
+          console.log(`\n🌐 Dashboard generated successfully!`);
+          console.log(`🔗 Open: ${dashboardPath}`);
+          console.log(
+            `📱 Or run: open "${dashboardPath}" (macOS) or start "${dashboardPath}" (Windows)`,
+          );
+        } catch (error) {
+          console.error('❌ Dashboard generation failed:', error);
           process.exit(1);
         }
         break;
