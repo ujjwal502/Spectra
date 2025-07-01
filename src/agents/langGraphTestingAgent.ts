@@ -763,43 +763,80 @@ export class LangGraphTestingAgent {
     endpoint: EndpointInfo,
     systemMap: SystemMap,
   ): Promise<TestScenario[]> {
+    console.log(
+      `🔒 [SECURITY GEN] Generating security scenarios for ${endpoint.method} ${endpoint.path}`,
+    );
     const scenarios: TestScenario[] = [];
 
+    // Security test: Check if endpoint accepts valid requests (for demo API without auth)
     if (endpoint.method !== 'GET') {
+      // Determine expected status code based on HTTP method
+      let expectedStatusCode = 200;
+      if (endpoint.method === 'POST') {
+        expectedStatusCode = 201; // Created
+      } else if (endpoint.method === 'DELETE') {
+        expectedStatusCode = 204; // No Content
+      } else if (endpoint.method === 'PUT' || endpoint.method === 'PATCH') {
+        expectedStatusCode = 200; // OK
+      }
+
+      // Use VALID test data for security tests (testing open access, not vulnerabilities)
+      const validTestData = await this.generateValidTestData(endpoint, 'valid', systemMap);
+      console.log(
+        `🔒 [SECURITY GEN] Generated valid test data for ${endpoint.method}:`,
+        validTestData,
+      );
+
       scenarios.push({
-        id: `security_unauthorized_${endpoint.method.toLowerCase()}_${Date.now()}`,
+        id: `security_valid_access_${endpoint.method.toLowerCase()}_${Date.now()}`,
         type: 'security',
         endpoint: endpoint.path,
         method: endpoint.method,
-        description: `Test ${endpoint.method} operation security posture`,
-        intent:
-          'Verify that the endpoint handles requests appropriately (may succeed if no auth required)',
-        testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
+        description: `Security test: ${endpoint.method} operation with valid data`,
+        intent: 'Verify that valid requests are accepted (demo API has open access)',
+        testData: validTestData,
         expectedOutcome: {
-          statusCode: 201, // Accept success for demo APIs without authentication
+          statusCode: expectedStatusCode,
           errorType: 'none',
         },
         dependencies: [],
       });
     }
 
+    // Security test: Check resource access with valid ID
     if (endpoint.path.includes('{id}')) {
+      // Determine expected status code for resource access
+      let expectedStatusCode = 200;
+      if (endpoint.method === 'DELETE') {
+        expectedStatusCode = 204; // No Content for DELETE
+      } else if (endpoint.method === 'POST') {
+        expectedStatusCode = 201; // Created for POST
+      }
+
+      // Use valid test data with existing ID
+      const validTestData = await this.generateValidTestData(endpoint, 'valid', systemMap);
+      console.log(
+        `🔒 [SECURITY GEN] Generated valid ID test data for ${endpoint.method}:`,
+        validTestData,
+      );
+
       scenarios.push({
-        id: `security_access_control_${Date.now()}`,
+        id: `security_valid_id_access_${Date.now()}`,
         type: 'security',
         endpoint: endpoint.path,
         method: endpoint.method,
-        description: 'Test resource access with valid ID',
-        intent: 'Verify that resource access works with proper ID (demo API allows open access)',
-        testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
+        description: 'Security test: Resource access with valid ID',
+        intent: 'Verify that valid ID access works (demo API allows open access)',
+        testData: validTestData,
         expectedOutcome: {
-          statusCode: 200, // Accept success for demo APIs without strict access control
+          statusCode: expectedStatusCode,
           errorType: 'none',
         },
         dependencies: [],
       });
     }
 
+    console.log(`🔒 [SECURITY GEN] Generated ${scenarios.length} security scenarios`);
     return scenarios;
   }
 
@@ -1013,8 +1050,62 @@ export class LangGraphTestingAgent {
       | 'invalid_department',
     systemMap: SystemMap,
   ): Promise<any> {
-    // Use the enhanced test data manager for consistent, reliable test data
-    return this.testDataManager.generateTestData(endpoint, dataType, systemMap);
+    console.log(
+      `📊 [TEST DATA] Generating ${dataType} data for ${endpoint.method} ${endpoint.path}`,
+    );
+
+    try {
+      // Use the enhanced test data manager for consistent, reliable test data
+      const testData = await this.testDataManager.generateTestData(endpoint, dataType, systemMap);
+      console.log(`📊 [TEST DATA] Generated data from manager:`, testData);
+      return testData;
+    } catch (error) {
+      console.log(`📊 [TEST DATA] Manager failed, using fallback generation`);
+      // Fallback: Generate simple valid test data
+      return this.generateFallbackTestData(endpoint, dataType);
+    }
+  }
+
+  private generateFallbackTestData(endpoint: EndpointInfo, dataType: string): any {
+    const testData: any = {};
+
+    // Handle path parameters (use valid IDs for security tests)
+    if (endpoint.path.includes('{id}')) {
+      if (dataType === 'valid' || dataType === 'unauthorized' || dataType === 'forbidden') {
+        testData.id = 1; // Use existing ID
+      } else if (dataType === 'not_found') {
+        testData.id = 999; // Non-existent ID
+      } else if (dataType === 'invalid_format') {
+        testData.id = 'invalid_id_format';
+      } else {
+        testData.id = Math.floor(Math.random() * 1000) + 100;
+      }
+    }
+
+    // Handle request body for POST/PUT
+    if (endpoint.method === 'POST' || endpoint.method === 'PUT') {
+      if (dataType === 'valid' || dataType === 'unauthorized' || dataType === 'forbidden') {
+        // Valid user data
+        testData.name = 'Test User';
+        testData.email = `test${Date.now()}@example.com`;
+        testData.age = 25;
+        testData.department = 'Engineering';
+      } else if (dataType === 'invalid') {
+        // Invalid data
+        testData.name = '';
+        testData.email = 'invalid-email';
+        testData.age = 17; // Below minimum
+        testData.department = 'InvalidDept';
+      } else if (dataType === 'missing_required') {
+        // Missing required fields
+        testData.age = 30;
+        testData.department = 'Sales';
+        // Missing name and email
+      }
+    }
+
+    console.log(`📊 [TEST DATA] Fallback generated:`, testData);
+    return testData;
   }
 
   private async executeTestScenario(
@@ -1075,12 +1166,25 @@ export class LangGraphTestingAgent {
   }
 
   private createIntelligentTestCase(scenario: TestScenario, systemMap: SystemMap): any {
+    const intelligentRequest = this.buildIntelligentRequest(scenario, systemMap);
+
+    // Handle path parameter substitution for URL
+    let endpoint = scenario.endpoint;
+    if (intelligentRequest._pathParams) {
+      // Substitute path parameters in the endpoint URL
+      for (const [key, value] of Object.entries(intelligentRequest._pathParams)) {
+        endpoint = endpoint.replace(`{${key}}`, String(value));
+      }
+      // Remove path params from request object as they're now in the URL
+      delete intelligentRequest._pathParams;
+    }
+
     // Create a properly formatted test case for the cURL runner
     const testCase: any = {
       name: scenario.description,
-      endpoint: scenario.endpoint,
+      endpoint: endpoint,
       method: scenario.method.toLowerCase(),
-      request: this.buildIntelligentRequest(scenario, systemMap),
+      request: Object.keys(intelligentRequest).length > 0 ? intelligentRequest : undefined,
       expected: {
         status: scenario.expectedOutcome.statusCode,
         schema: scenario.expectedOutcome.schema,
@@ -1092,46 +1196,88 @@ export class LangGraphTestingAgent {
       method: testCase.method,
       hasRequestData: !!testCase.request,
       expectedStatus: testCase.expected.status,
+      requestKeys: testCase.request ? Object.keys(testCase.request) : [],
     });
 
     return testCase;
   }
 
   private buildIntelligentRequest(scenario: TestScenario, systemMap: SystemMap): any {
-    const request: any = {};
+    console.log(
+      `🔧 [REQUEST BUILD] Building request for ${scenario.type} test: ${scenario.description}`,
+    );
+    console.log(`🔧 [REQUEST BUILD] Input test data:`, JSON.stringify(scenario.testData, null, 2));
+
     const testData = scenario.testData;
 
     // Handle path parameters intelligently
     const pathParams: any = {};
-    for (const [key, value] of Object.entries(testData)) {
+    const requestBody: any = {};
+
+    // Flatten and clean test data if it has nested structures
+    const flattenedData = this.flattenTestData(testData);
+    console.log(`🔧 [REQUEST BUILD] Flattened test data:`, flattenedData);
+
+    // Separate path parameters from body data
+    for (const [key, value] of Object.entries(flattenedData)) {
       if (scenario.endpoint.includes(`{${key}}`)) {
         pathParams[key] = value;
-      }
-    }
-
-    // Build request body for POST/PUT operations
-    if (scenario.method === 'POST' || scenario.method === 'PUT') {
-      const requestBody: any = {};
-
-      // Only include valid schema fields, exclude path parameters
-      for (const [key, value] of Object.entries(testData)) {
-        if (!scenario.endpoint.includes(`{${key}}`)) {
+        console.log(`🔧 [REQUEST BUILD] Added path param: ${key} = ${value}`);
+      } else {
+        // Only include valid schema fields in request body
+        if (key !== 'requestBody' && key !== 'pathParams' && key !== 'body') {
           requestBody[key] = value;
+          console.log(`🔧 [REQUEST BUILD] Added body field: ${key} = ${value}`);
         }
       }
-
-      // Remove any invalid fields that shouldn't be in the request
-      delete requestBody.requestBody; // Remove the problematic 'requestBody' field
-
-      request.body = requestBody;
     }
 
-    // Add path parameters
+    // Build the request object in the format expected by cURL runner
+    const request: any = {};
+
+    // For POST/PUT operations, add request body directly (not wrapped in 'body')
+    if (
+      (scenario.method === 'POST' || scenario.method === 'PUT') &&
+      Object.keys(requestBody).length > 0
+    ) {
+      // Add request body fields directly to request object
+      Object.assign(request, requestBody);
+      console.log(`🔧 [REQUEST BUILD] Added request body for ${scenario.method}:`, requestBody);
+    }
+
+    // Add path parameters for URL substitution
     if (Object.keys(pathParams).length > 0) {
-      request.pathParams = pathParams;
+      // Store path params for URL substitution (not as request body)
+      request._pathParams = pathParams;
+      console.log(`🔧 [REQUEST BUILD] Added path params:`, pathParams);
     }
 
+    console.log(`🔧 [REQUEST BUILD] Final request object:`, request);
     return request;
+  }
+
+  // Helper method to flatten complex test data structures
+  private flattenTestData(data: any): any {
+    // If data has a 'body' property, extract it
+    if (data && typeof data === 'object' && data.body) {
+      console.log(`🔧 [FLATTEN] Found 'body' property, extracting:`, data.body);
+      return { ...data.body, ...data }; // Merge body fields with top-level fields, preferring body
+    }
+
+    // If data has nested objects, flatten them
+    const flattened: any = {};
+    for (const [key, value] of Object.entries(data || {})) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        // If it's a nested object, flatten it
+        console.log(`🔧 [FLATTEN] Flattening nested object for key: ${key}`);
+        Object.assign(flattened, value);
+      } else {
+        // Regular primitive value
+        flattened[key] = value;
+      }
+    }
+
+    return flattened;
   }
 
   private async analyzeTestExecution(
@@ -1182,22 +1328,43 @@ export class LangGraphTestingAgent {
     // Primary success criteria: status code match
     const statusMatch = result.response?.status === scenario.expectedOutcome.statusCode;
 
+    console.log(`🎯 [TEST EVAL] Evaluating ${scenario.type} test "${scenario.description}"`);
+    console.log(
+      `🎯 [TEST EVAL] Expected: ${scenario.expectedOutcome.statusCode}, Got: ${result.response?.status}, Match: ${statusMatch}`,
+    );
+
     // For error scenarios, we expect specific error status codes
-    if (scenario.type === 'error' || scenario.type === 'security') {
+    if (scenario.type === 'error') {
+      console.log(`🎯 [TEST EVAL] Error test - returning status match: ${statusMatch}`);
+      return statusMatch;
+    }
+
+    // For security scenarios (testing open access), we expect successful responses
+    if (scenario.type === 'security') {
+      console.log(`🎯 [TEST EVAL] Security test - expecting success, status match: ${statusMatch}`);
       return statusMatch;
     }
 
     // For functional scenarios, status must match and be successful
     if (scenario.type === 'functional') {
-      return statusMatch && result.response?.status >= 200 && result.response?.status < 300;
+      const isSuccessful = result.response?.status >= 200 && result.response?.status < 300;
+      console.log(
+        `🎯 [TEST EVAL] Functional test - status match: ${statusMatch}, is successful: ${isSuccessful}`,
+      );
+      return statusMatch && isSuccessful;
     }
 
     // For boundary scenarios, evaluate based on intent
     if (scenario.type === 'boundary') {
       // Boundary tests might succeed or fail depending on implementation
-      return statusMatch || (result.response?.status >= 200 && result.response?.status < 500);
+      const fallbackSuccess = result.response?.status >= 200 && result.response?.status < 500;
+      console.log(
+        `🎯 [TEST EVAL] Boundary test - status match: ${statusMatch}, fallback: ${fallbackSuccess}`,
+      );
+      return statusMatch || fallbackSuccess;
     }
 
+    console.log(`🎯 [TEST EVAL] Default case - returning status match: ${statusMatch}`);
     return statusMatch;
   }
 
