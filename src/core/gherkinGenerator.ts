@@ -5,7 +5,7 @@ import { AIService } from '../services/aiService';
 export class GherkinGenerator {
   private aiService: AIService | null = null;
 
-  constructor(useAI: boolean = false) {
+  constructor(useAI: boolean = true) {
     if (useAI) {
       this.aiService = new AIService();
     }

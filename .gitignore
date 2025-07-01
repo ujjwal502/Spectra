@@ -50,4 +50,10 @@ Thumbs.db
 
 # Project specific
 features/*
-test-results.json 
+test-results.json
+
+# Repository paths
+examples/rp-ccs-decision-services-ao--hk-hbap-develop
+examples/rp-ccs-ds-ao--hk-hbap-develop
+examples/rp-ccs-ds-ao-router-hcc--hk-hbap-develop
+examples/mock-api/
