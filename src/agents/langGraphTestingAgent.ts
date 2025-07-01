@@ -50,7 +50,7 @@ export class LangGraphTestingAgent {
       gherkinFeatures: [],
       recommendations: [],
       currentPhase: 'understanding',
-      messages: ['Starting intelligent API testing with LangGraph-inspired workflow'],
+      messages: ['Starting intelligent API testing workflow'],
     };
 
     // Layer 1: Understanding Layer

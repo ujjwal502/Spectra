@@ -566,12 +566,12 @@ export function addEnhancedCommands(program: Command): void {
     });
 
   program
-    .command('run-langgraph-intelligent-testing')
-    .description('Run LangGraph intelligent testing on a given API spec')
+    .command('run-intelligent-testing')
+    .description('Run intelligent testing on a given API spec')
     .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
     .action(async (apiSpecPath: string) => {
       try {
-        console.log('🚀 [LANGGRAPH] Starting LangGraph intelligent testing...');
+        console.log('Starting intelligent testing...');
         console.log('📄 API Spec:', apiSpecPath);
 
         // Import the LangGraph testing agent
@@ -585,10 +585,10 @@ export function addEnhancedCommands(program: Command): void {
         const specContent = fs.readFileSync(apiSpecPath, 'utf-8');
         const apiSpec = JSON.parse(specContent);
 
-        console.log('🧠 [LANGGRAPH] Initializing intelligent testing agent...');
+        console.log('🧠 Initializing intelligent testing agent...');
         const agent = new LangGraphTestingAgent();
 
-        console.log('🎯 [LANGGRAPH] Executing intelligent testing workflow...');
+        console.log('🎯 Executing intelligent testing workflow...');
 
         // Determine output directory based on API spec path
         const path = await import('path');
@@ -597,7 +597,7 @@ export function addEnhancedCommands(program: Command): void {
         const result = await agent.executeIntelligentTesting(apiSpec, outputDir);
 
         // Display results
-        console.log('\n🎉 [LANGGRAPH] Intelligent testing completed!');
+        console.log('\n🎉 Intelligent testing completed!');
         console.log('═══════════════════════════════════════════════════════════');
 
         console.log(`📊 Phase: ${result.currentPhase}`);
@@ -664,9 +664,9 @@ export function addEnhancedCommands(program: Command): void {
         }
 
         console.log('\n📁 [GHERKIN] Gherkin features exported to features/ directory');
-        console.log('\n🎯 [LANGGRAPH] LangGraph intelligent testing completed successfully!');
+        console.log('\n🎯 Intelligent testing completed successfully!');
       } catch (error) {
-        console.error('❌ [LANGGRAPH] Error running LangGraph testing:', error);
+        console.error('❌ Error running intelligent testing:', error);
         throw error;
       }
     });
