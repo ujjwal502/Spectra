@@ -53,21 +53,33 @@ export class ApiSchemaParser {
     for (const path in schema.paths) {
       const pathItem = schema.paths[path];
 
-      const methods = [
-        { name: 'get', operation: pathItem.get },
-        { name: 'post', operation: pathItem.post },
-        { name: 'put', operation: pathItem.put },
-        { name: 'delete', operation: pathItem.delete },
-        { name: 'patch', operation: pathItem.patch },
-        { name: 'options', operation: pathItem.options },
-        { name: 'head', operation: pathItem.head },
+      // Define standard method names and their possible variations
+      const methodMappings = [
+        { name: 'get', variants: ['get', 'GET', 'Get'] },
+        { name: 'post', variants: ['post', 'POST', 'Post'] },
+        { name: 'put', variants: ['put', 'PUT', 'Put'] },
+        { name: 'delete', variants: ['delete', 'DELETE', 'Delete'] },
+        { name: 'patch', variants: ['patch', 'PATCH', 'Patch'] },
+        { name: 'options', variants: ['options', 'OPTIONS', 'Options'] },
+        { name: 'head', variants: ['head', 'HEAD', 'Head'] },
       ];
 
-      for (const { name, operation } of methods) {
+      // Check all possible method variants
+      for (const { name, variants } of methodMappings) {
+        // Find the operation by checking all case variants
+        let operation = null;
+        for (const variant of variants) {
+          // Use a safe type check before accessing the property
+          if (variant in pathItem && (pathItem as Record<string, any>)[variant]) {
+            operation = (pathItem as Record<string, any>)[variant];
+            break;
+          }
+        }
+
         if (operation) {
           endpoints.push({
             path,
-            method: name,
+            method: name, // Always use lowercase for method name
             operation,
             pathItem,
           });
