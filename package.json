@@ -52,8 +52,8 @@
     "test:demo-api:enhanced:generate": "ts-node src/index.ts generate-tests-enhanced examples/demo-api/openapi.json ./examples/demo-api/enhanced-tests",
     "test:demo-api:enhanced:execute": "ts-node src/index.ts execute-tests-intelligent ./examples/demo-api/enhanced-tests http://localhost:8081",
     "test:demo-api:enhanced:workflow": "ts-node src/index.ts test-workflow-enhanced ./examples/demo-api http://localhost:8081 ./examples/demo-api/spectra-enhanced-tests",
-    "test:demo-api:langgraph": "ts-node src/cli/enhanced.ts run-langgraph-intelligent-testing examples/demo-api/openapi.json",
-    "test:mock-api:langgraph": "ts-node src/cli/enhanced.ts run-langgraph-intelligent-testing examples/mock-api/openapi.json"
+    "test:demo-api:intelligent": "ts-node src/cli/enhanced.ts run-intelligent-testing examples/demo-api/openapi.json",
+    "test:mock-api:intelligent": "ts-node src/cli/enhanced.ts run-intelligent-testing examples/mock-api/openapi.json"
   },
   "keywords": [
     "api",
