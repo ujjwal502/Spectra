@@ -30,8 +30,66 @@ const customAgent = new https.Agent({
 });
 
 const customFetch = (url: string, opts: any = {}) => {
-  console.log('🔄 [AZURE AI SERVICE] Custom fetch called with URL:', url, opts);
-  return fetch(url, { ...opts, agent: customAgent });
+  console.log('🔄 [AZURE AI SERVICE] Original URL:', url);
+  
+  // Check if this is a LangChain-generated URL that we need to redirect
+  let finalUrl = url;
+  
+  // If the URL contains .openai.azure.com, replace it with the HSBC gateway
+  if (url.includes('.openai.azure.com')) {
+    try {
+      // Extract the deployment name and API version from the URL
+      const urlParts = new URL(url);
+      const pathParts = urlParts.pathname.split('/').filter(part => part.length > 0);
+      
+      // Find deployment name and endpoint type
+      const deploymentIndex = pathParts.indexOf('deployments');
+      let deploymentName = '';
+      let endpointPath = '';
+      
+      if (deploymentIndex !== -1 && deploymentIndex < pathParts.length - 1) {
+        deploymentName = pathParts[deploymentIndex + 1];
+        // Get everything after the deployment name
+        endpointPath = pathParts.slice(deploymentIndex + 2).join('/');
+      }
+      
+      // Build the correct HSBC gateway URL
+      const baseGatewayUrl = process.env.AZURE_OPENAI_BASE_PATH
+      
+      // Construct the final URL
+      if (deploymentName) {
+        finalUrl = `${baseGatewayUrl}/${deploymentName}`;
+        if (endpointPath) {
+          finalUrl += `/${endpointPath}`;
+        }
+        
+        // Preserve query parameters
+        if (urlParts.search) {
+          finalUrl += urlParts.search;
+        }
+        
+        console.log('🔄 [AZURE AI SERVICE] URL redirected from:', url);
+        console.log('🔄 [AZURE AI SERVICE] URL redirected to:', finalUrl);
+        console.log('🔄 [AZURE AI SERVICE] Deployment:', deploymentName, 'Endpoint:', endpointPath);
+      } else {
+        console.log('⚠️ [AZURE AI SERVICE] Could not extract deployment name from URL, using original');
+        finalUrl = url;
+      }
+    } catch (error) {
+      console.error('❌ [AZURE AI SERVICE] Error parsing URL for redirection:', error);
+      console.log('⚠️ [AZURE AI SERVICE] Using original URL due to parsing error');
+      finalUrl = url;
+    }
+  }
+  
+  console.log('🔄 [AZURE AI SERVICE] Final URL:', finalUrl);
+  
+  // Only log request options in development or if explicitly enabled
+  if (process.env.NODE_ENV === 'development' || process.env.AZURE_AI_DEBUG) {
+    console.log('🔄 [AZURE AI SERVICE] Request options:', JSON.stringify(opts, null, 2));
+  }
+  
+  return fetch(finalUrl, { ...opts, agent: customAgent });
 };
 
 export class AzureAIService {
@@ -43,8 +101,8 @@ export class AzureAIService {
     // Load configuration from environment variables or provided config
     this.config = {
       // Azure Configuration (similar to Python code pattern)
-      // azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME,
-      // azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
+      azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME,
+      azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
       azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-02-01',
       azureOpenAIBasePath: process.env.AZURE_OPENAI_BASE_PATH,
 
@@ -72,8 +130,8 @@ export class AzureAIService {
 
     // Initialize Azure Chat OpenAI
     this.chatModel = new AzureChatOpenAI({
-      // azureOpenAIApiKey: this.config.azureOpenAIApiKey,
-      // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
+      azureOpenAIApiKey: this.config.azureOpenAIApiKey,
+      azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
       azureOpenAIApiDeploymentName: this.config.azureOpenAIApiDeploymentName,
       azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
       azureOpenAIBasePath: this.config.azureOpenAIBasePath,
@@ -104,8 +162,8 @@ export class AzureAIService {
 
     // Initialize Azure OpenAI Embeddings (similar to Python)
     this.embeddingsModel = new AzureOpenAIEmbeddings({
-      // azureOpenAIApiKey: this.config.azureOpenAIApiKey,
-      // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
+      azureOpenAIApiKey: this.config.azureOpenAIApiKey,
+      azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
       azureOpenAIApiEmbeddingsDeploymentName: this.config.azureOpenAIApiEmbeddingsDeploymentName,
       azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
       azureOpenAIBasePath: this.config.azureOpenAIBasePath,
@@ -173,8 +231,8 @@ export class AzureAIService {
       const tempModel =
         options?.temperature !== undefined || options?.maxTokens !== undefined
           ? new AzureChatOpenAI({
-              // azureOpenAIApiKey: this.config.azureOpenAIApiKey,
-              // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
+              azureOpenAIApiKey: this.config.azureOpenAIApiKey,
+              azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
               azureOpenAIApiDeploymentName: this.config.azureOpenAIApiDeploymentName,
               azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
               azureOpenAIBasePath: this.config.azureOpenAIBasePath,
@@ -236,7 +294,7 @@ export class AzureAIService {
    */
   getConfig(): Partial<AzureOpenAIConfig> {
     return {
-      // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
+      azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
       azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
       azureOpenAIApiDeploymentName: this.config.azureOpenAIApiDeploymentName,
       azureOpenAIApiEmbeddingsDeploymentName: this.config.azureOpenAIApiEmbeddingsDeploymentName,
