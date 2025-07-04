@@ -81,6 +81,7 @@ export class AzureAIService {
       maxTokens: 2000,
       maxRetries: 3,
       timeout: 60000,
+      apiKey: this.config.openaiApiKey,
       // Custom HTTP client configuration (like Python code)
       configuration: {
         fetch: customFetch as any,
@@ -110,6 +111,7 @@ export class AzureAIService {
       azureOpenAIBasePath: this.config.azureOpenAIBasePath,
       maxRetries: 3,
       timeout: 60000,
+      apiKey: this.config.openaiApiKey,
       // Custom configuration for embeddings (matching Python pattern)
       configuration: {
         fetch: customFetch as any,
@@ -180,6 +182,7 @@ export class AzureAIService {
               maxTokens: options?.maxTokens ?? 2000,
               maxRetries: 3,
               timeout: 60000,
+              apiKey: this.config.openaiApiKey,
             })
           : this.chatModel;
 
