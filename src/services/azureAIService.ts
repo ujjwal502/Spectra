@@ -44,7 +44,7 @@ export class AzureAIService {
     this.config = {
       // Azure Configuration (similar to Python code pattern)
       // azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME,
-      azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
+      // azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
       azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-02-01',
       azureOpenAIBasePath: process.env.AZURE_OPENAI_BASE_PATH,
 
@@ -72,7 +72,7 @@ export class AzureAIService {
 
     // Initialize Azure Chat OpenAI
     this.chatModel = new AzureChatOpenAI({
-      azureOpenAIApiKey: this.config.azureOpenAIApiKey,
+      // azureOpenAIApiKey: this.config.azureOpenAIApiKey,
       // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
       azureOpenAIApiDeploymentName: this.config.azureOpenAIApiDeploymentName,
       azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
@@ -93,7 +93,9 @@ export class AzureAIService {
             type: 'chat',
           }),
           'Authorization-Type': 'openai',
-          Authorization: `Bearer ${this.config.openaiApiKey || this.config.azureOpenAIApiKey}`,
+          Authorization: `Bearer ${this.config.openaiApiKey
+            //  || this.config.azureOpenAIApiKey
+            }`,
           'Content-Type': 'application/json',
         },
       },
@@ -101,7 +103,7 @@ export class AzureAIService {
 
     // Initialize Azure OpenAI Embeddings (similar to Python)
     this.embeddingsModel = new AzureOpenAIEmbeddings({
-      azureOpenAIApiKey: this.config.azureOpenAIApiKey,
+      // azureOpenAIApiKey: this.config.azureOpenAIApiKey,
       // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
       azureOpenAIApiEmbeddingsDeploymentName: this.config.azureOpenAIApiEmbeddingsDeploymentName,
       azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
@@ -120,7 +122,9 @@ export class AzureAIService {
             type: 'embedding',
           }),
           'Authorization-Type': 'openai',
-          Authorization: `Bearer ${this.config.openaiApiKey || this.config.azureOpenAIApiKey}`,
+          Authorization: `Bearer ${this.config.openaiApiKey 
+            // || this.config.azureOpenAIApiKey
+          }`,
           'Content-Type': 'application/json',
         },
       },
@@ -167,7 +171,7 @@ export class AzureAIService {
       const tempModel =
         options?.temperature !== undefined || options?.maxTokens !== undefined
           ? new AzureChatOpenAI({
-              azureOpenAIApiKey: this.config.azureOpenAIApiKey,
+              // azureOpenAIApiKey: this.config.azureOpenAIApiKey,
               // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
               azureOpenAIApiDeploymentName: this.config.azureOpenAIApiDeploymentName,
               azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
