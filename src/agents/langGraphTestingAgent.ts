@@ -1,4 +1,4 @@
-import { ChatOpenAI } from '@langchain/openai';
+import { AzureChatOpenAI } from '@langchain/openai';
 import { OpenAPIV3 } from 'openapi-types';
 import {
   TestingState,
@@ -19,19 +19,23 @@ import {
 } from '../types/langGraphTypes';
 import { LangGraphGherkinGenerator } from './langGraphGherkinGenerator';
 import { LangGraphTestDataManager } from './langGraphTestDataManager';
+import { AzureAIService } from '../services/azureAIService';
 
 export class LangGraphTestingAgent {
-  private model: ChatOpenAI;
+  private model: AzureChatOpenAI;
+  private azureAIService: AzureAIService;
   private gherkinGenerator: LangGraphGherkinGenerator;
   private testDataManager: LangGraphTestDataManager;
 
   constructor() {
-    this.model = new ChatOpenAI({
-      modelName: 'gpt-4',
-      temperature: 0.1,
-    });
+    this.azureAIService = new AzureAIService();
+    this.model = this.azureAIService.getChatModel();
+    
     this.gherkinGenerator = new LangGraphGherkinGenerator();
     this.testDataManager = new LangGraphTestDataManager();
+    
+    console.log('🔧 [LANGGRAPH TESTING AGENT] Initialized with Azure OpenAI');
+    console.log(`📊 [AZURE CONFIG] ${JSON.stringify(this.azureAIService.getConfig(), null, 2)}`);
   }
 
   /**

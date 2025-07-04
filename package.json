@@ -22,7 +22,7 @@
     "generate:spec:ds-ao": "ts-node src/index.ts generate-spec examples/rp-ccs-ds-ao--hk-hbap-develop ./examples/rp-ccs-ds-ao--hk-hbap-develop/enhanced-schema.json",
     "generate:spec:ds-router": "ts-node src/index.ts generate-spec examples/rp-ccs-ds-ao-router-hcc--hk-hbap-develop ./examples/rp-ccs-ds-ao-router-hcc--hk-hbap-develop/enhanced-schema.json",
     "generate:spec:mock-api": "ts-node src/index.ts generate-spec examples/mock-api ./examples/mock-api/openapi.json",
-    "generate:spec:demo-api": "ts-node src/index.ts generate-spec examples/demo-api ./examples/demo-api/openapi.json",
+    "generate:spec:demo-api": "ts-node src/index.ts generate-spec examples/demo-api ./examples/demo-api/openapiEnhanced.json",
     "run": "ts-node src/index.ts run",
     "run:ai": "ts-node src/index.ts run --ai",
     "regression:baseline": "ts-node src/index.ts regression:baseline --ai",

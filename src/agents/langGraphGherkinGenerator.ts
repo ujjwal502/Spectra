@@ -1,4 +1,4 @@
-import { ChatOpenAI } from '@langchain/openai';
+import { AzureChatOpenAI } from '@langchain/openai';
 import {
   TestingState,
   GherkinFeature,
@@ -9,19 +9,21 @@ import {
   SystemMap,
   EndpointInfo,
 } from '../types/langGraphTypes';
+import { AzureAIService } from '../services/azureAIService';
 
 /**
- * LangGraph Gherkin Generator
+ * LangGraph Gherkin Generator with Azure OpenAI
  * Converts test scenarios into comprehensive Gherkin features with business context
  */
 export class LangGraphGherkinGenerator {
-  private model: ChatOpenAI;
+  private model: AzureChatOpenAI;
+  private azureAIService: AzureAIService;
 
   constructor() {
-    this.model = new ChatOpenAI({
-      modelName: 'gpt-4',
-      temperature: 0.2, // Slightly higher for more creative Gherkin language
-    });
+    this.azureAIService = new AzureAIService();
+    this.model = this.azureAIService.getChatModel();
+    
+    console.log('🔧 [LANGGRAPH GHERKIN GENERATOR] Initialized with Azure OpenAI');
   }
 
   /**
