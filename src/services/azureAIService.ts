@@ -43,7 +43,7 @@ export class AzureAIService {
     // Load configuration from environment variables or provided config
     this.config = {
       // Azure Configuration (similar to Python code pattern)
-      azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME,
+      // azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME,
       azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
       azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-02-01',
       azureOpenAIBasePath: process.env.AZURE_OPENAI_BASE_PATH,
@@ -73,7 +73,7 @@ export class AzureAIService {
     // Initialize Azure Chat OpenAI
     this.chatModel = new AzureChatOpenAI({
       azureOpenAIApiKey: this.config.azureOpenAIApiKey,
-      azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
+      // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
       azureOpenAIApiDeploymentName: this.config.azureOpenAIApiDeploymentName,
       azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
       azureOpenAIBasePath: this.config.azureOpenAIBasePath,
@@ -102,7 +102,7 @@ export class AzureAIService {
     // Initialize Azure OpenAI Embeddings (similar to Python)
     this.embeddingsModel = new AzureOpenAIEmbeddings({
       azureOpenAIApiKey: this.config.azureOpenAIApiKey,
-      azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
+      // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
       azureOpenAIApiEmbeddingsDeploymentName: this.config.azureOpenAIApiEmbeddingsDeploymentName,
       azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
       azureOpenAIBasePath: this.config.azureOpenAIBasePath,
@@ -126,9 +126,7 @@ export class AzureAIService {
       },
     });
 
-    console.log(
-      `✅ [AZURE AI SERVICE] Models initialized with Azure instance: ${this.config.azureOpenAIApiInstanceName}`,
-    );
+   
   }
 
   /**
@@ -170,7 +168,7 @@ export class AzureAIService {
         options?.temperature !== undefined || options?.maxTokens !== undefined
           ? new AzureChatOpenAI({
               azureOpenAIApiKey: this.config.azureOpenAIApiKey,
-              azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
+              // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
               azureOpenAIApiDeploymentName: this.config.azureOpenAIApiDeploymentName,
               azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
               azureOpenAIBasePath: this.config.azureOpenAIBasePath,
@@ -231,7 +229,7 @@ export class AzureAIService {
    */
   getConfig(): Partial<AzureOpenAIConfig> {
     return {
-      azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
+      // azureOpenAIApiInstanceName: this.config.azureOpenAIApiInstanceName,
       azureOpenAIApiVersion: this.config.azureOpenAIApiVersion,
       azureOpenAIApiDeploymentName: this.config.azureOpenAIApiDeploymentName,
       azureOpenAIApiEmbeddingsDeploymentName: this.config.azureOpenAIApiEmbeddingsDeploymentName,
