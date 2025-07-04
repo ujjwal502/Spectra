@@ -29,7 +29,10 @@ const customAgent = new https.Agent({
   rejectUnauthorized: true,
 });
 
-const customFetch = (url: string, opts: any = {}) => fetch(url, { ...opts, agent: customAgent });
+const customFetch = (url: string, opts: any = {}) => {
+  console.log('🔄 [AZURE AI SERVICE] Custom fetch called with URL:', url, opts);
+  return fetch(url, { ...opts, agent: customAgent });
+};
 
 export class AzureAIService {
   private chatModel!: AzureChatOpenAI;
