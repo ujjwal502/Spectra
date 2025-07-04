@@ -29,68 +29,68 @@ const customAgent = new https.Agent({
   rejectUnauthorized: true,
 });
 
-const customFetch = (url: string, opts: any = {}) => {
-  console.log('🔄 [AZURE AI SERVICE] Original URL:', url);
+// const customFetch = (url: string, opts: any = {}) => {
+//   console.log('🔄 [AZURE AI SERVICE] Original URL:', url);
   
-  // Check if this is a LangChain-generated URL that we need to redirect
-  let finalUrl = url;
+//   // Check if this is a LangChain-generated URL that we need to redirect
+//   let finalUrl = url;
   
-  // If the URL contains .openai.azure.com, replace it with the HSBC gateway
-  if (url.includes('.openai.azure.com')) {
-    try {
-      // Extract the deployment name and API version from the URL
-      const urlParts = new URL(url);
-      const pathParts = urlParts.pathname.split('/').filter(part => part.length > 0);
+//   // If the URL contains .openai.azure.com, replace it with the HSBC gateway
+//   if (url.includes('.openai.azure.com')) {
+//     try {
+//       // Extract the deployment name and API version from the URL
+//       const urlParts = new URL(url);
+//       const pathParts = urlParts.pathname.split('/').filter(part => part.length > 0);
       
-      // Find deployment name and endpoint type
-      const deploymentIndex = pathParts.indexOf('deployments');
-      let deploymentName = '';
-      let endpointPath = '';
+//       // Find deployment name and endpoint type
+//       const deploymentIndex = pathParts.indexOf('deployments');
+//       let deploymentName = '';
+//       let endpointPath = '';
       
-      if (deploymentIndex !== -1 && deploymentIndex < pathParts.length - 1) {
-        deploymentName = pathParts[deploymentIndex + 1];
-        // Get everything after the deployment name
-        endpointPath = pathParts.slice(deploymentIndex + 2).join('/');
-      }
+//       if (deploymentIndex !== -1 && deploymentIndex < pathParts.length - 1) {
+//         deploymentName = pathParts[deploymentIndex + 1];
+//         // Get everything after the deployment name
+//         endpointPath = pathParts.slice(deploymentIndex + 2).join('/');
+//       }
       
-      // Build the correct HSBC gateway URL
-      const baseGatewayUrl = process.env.AZURE_OPENAI_BASE_PATH
+//       // Build the correct HSBC gateway URL
+//       const baseGatewayUrl = process.env.AZURE_OPENAI_BASE_PATH
       
-      // Construct the final URL
-      if (deploymentName) {
-        finalUrl = `${baseGatewayUrl}/${deploymentName}`;
-        if (endpointPath) {
-          finalUrl += `/${endpointPath}`;
-        }
+//       // Construct the final URL
+//       if (deploymentName) {
+//         finalUrl = `${baseGatewayUrl}/${deploymentName}`;
+//         if (endpointPath) {
+//           finalUrl += `/${endpointPath}`;
+//         }
         
-        // Preserve query parameters
-        if (urlParts.search) {
-          finalUrl += urlParts.search;
-        }
+//         // Preserve query parameters
+//         if (urlParts.search) {
+//           finalUrl += urlParts.search;
+//         }
         
-        console.log('🔄 [AZURE AI SERVICE] URL redirected from:', url);
-        console.log('🔄 [AZURE AI SERVICE] URL redirected to:', finalUrl);
-        console.log('🔄 [AZURE AI SERVICE] Deployment:', deploymentName, 'Endpoint:', endpointPath);
-      } else {
-        console.log('⚠️ [AZURE AI SERVICE] Could not extract deployment name from URL, using original');
-        finalUrl = url;
-      }
-    } catch (error) {
-      console.error('❌ [AZURE AI SERVICE] Error parsing URL for redirection:', error);
-      console.log('⚠️ [AZURE AI SERVICE] Using original URL due to parsing error');
-      finalUrl = url;
-    }
-  }
+//         console.log('🔄 [AZURE AI SERVICE] URL redirected from:', url);
+//         console.log('🔄 [AZURE AI SERVICE] URL redirected to:', finalUrl);
+//         console.log('🔄 [AZURE AI SERVICE] Deployment:', deploymentName, 'Endpoint:', endpointPath);
+//       } else {
+//         console.log('⚠️ [AZURE AI SERVICE] Could not extract deployment name from URL, using original');
+//         finalUrl = url;
+//       }
+//     } catch (error) {
+//       console.error('❌ [AZURE AI SERVICE] Error parsing URL for redirection:', error);
+//       console.log('⚠️ [AZURE AI SERVICE] Using original URL due to parsing error');
+//       finalUrl = url;
+//     }
+//   }
   
-  console.log('🔄 [AZURE AI SERVICE] Final URL:', finalUrl);
+//   console.log('🔄 [AZURE AI SERVICE] Final URL:', finalUrl);
   
-  // Only log request options in development or if explicitly enabled
-  if (process.env.NODE_ENV === 'development' || process.env.AZURE_AI_DEBUG) {
-    console.log('🔄 [AZURE AI SERVICE] Request options:', JSON.stringify(opts, null, 2));
-  }
+//   // Only log request options in development or if explicitly enabled
+//   if (process.env.NODE_ENV === 'development' || process.env.AZURE_AI_DEBUG) {
+//     console.log('🔄 [AZURE AI SERVICE] Request options:', JSON.stringify(opts, null, 2));
+//   }
   
-  return fetch(finalUrl, { ...opts, agent: customAgent });
-};
+//   return fetch(finalUrl, { ...opts, agent: customAgent });
+// };
 
 export class AzureAIService {
   private chatModel!: AzureChatOpenAI;
@@ -103,13 +103,13 @@ export class AzureAIService {
       // Azure Configuration (similar to Python code pattern)
       azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME,
       azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
-      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-02-01',
+      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION,
       azureOpenAIBasePath: process.env.AZURE_OPENAI_BASE_PATH,
 
       // Model deployments
-      azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME || 'o4-mini',
+      azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME,
       azureOpenAIApiEmbeddingsDeploymentName:
-        process.env.AZURE_OPENAI_API_EMBEDDINGS_DEPLOYMENT_NAME || 'text-embedding-ada-002',
+        process.env.AZURE_OPENAI_API_EMBEDDINGS_DEPLOYMENT_NAME,
 
       // OpenAI Config
       openaiBaseUrl: process.env.OPENAI_BASE_URL,
@@ -117,8 +117,8 @@ export class AzureAIService {
       openaiProjectId: process.env.OPENAI_PROJECT_ID,
       openaiApiKey: process.env.OPENAI_API_KEY,
       openaiApiVersion: process.env.OPENAI_API_VERSION,
-      openaiModel: process.env.OPENAI_MODEL || 'gpt-4',
-      openaiEmbeddingModel: process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-ada-002',
+      openaiModel: process.env.OPENAI_MODEL,
+      openaiEmbeddingModel: process.env.OPENAI_EMBEDDING_MODEL,
       ...config,
     };
 
@@ -139,10 +139,10 @@ export class AzureAIService {
       maxTokens: 2000,
       maxRetries: 3,
       timeout: 60000,
-      apiKey: this.config.openaiApiKey,
-      // Custom HTTP client configuration (like Python code)
+      openAIApiKey: this.config.openaiApiKey,
+   
       configuration: {
-        fetch: customFetch as any,
+        // fetch: customFetch as any,
         fetchOptions: {
           agent: customAgent,
         },
@@ -172,7 +172,7 @@ export class AzureAIService {
       apiKey: this.config.openaiApiKey,
       // Custom configuration for embeddings (matching Python pattern)
       configuration: {
-        fetch: customFetch as any,
+        // fetch: customFetch as any,
         fetchOptions: {
           agent: customAgent,
         },
@@ -240,7 +240,7 @@ export class AzureAIService {
               maxTokens: options?.maxTokens ?? 2000,
               maxRetries: 3,
               timeout: 60000,
-              apiKey: this.config.openaiApiKey,
+              openAIApiKey: this.config.openaiApiKey,
             })
           : this.chatModel;
 
