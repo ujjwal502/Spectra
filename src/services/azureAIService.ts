@@ -29,69 +29,6 @@ const customAgent = new https.Agent({
   rejectUnauthorized: true,
 });
 
-const customFetch = (url: string, opts: any = {}) => {
-  console.log('🔄 [AZURE AI SERVICE] Original URL:', url);
-  
-  // Check if this is a LangChain-generated URL that we need to redirect
-  let finalUrl = url;
-  
-  // If the URL contains .openai.azure.com, replace it with the HSBC gateway
-  if (url.includes('.openai.azure.com')) {
-    try {
-      // Extract the deployment name and API version from the URL
-      const urlParts = new URL(url);
-      const pathParts = urlParts.pathname.split('/').filter(part => part.length > 0);
-      
-      // Find deployment name and endpoint type
-      const deploymentIndex = pathParts.indexOf('deployments');
-      let deploymentName = '';
-      let endpointPath = '';
-      
-      if (deploymentIndex !== -1 && deploymentIndex < pathParts.length - 1) {
-        deploymentName = pathParts[deploymentIndex + 1];
-        // Get everything after the deployment name
-        endpointPath = pathParts.slice(deploymentIndex + 2).join('/');
-      }
-      
-      // Build the correct HSBC gateway URL
-      const baseGatewayUrl = process.env.AZURE_OPENAI_BASE_PATH
-      
-      // Construct the final URL
-      if (deploymentName) {
-        finalUrl = `${baseGatewayUrl}/${deploymentName}`;
-        if (endpointPath) {
-          finalUrl += `/${endpointPath}`;
-        }
-        
-        // Preserve query parameters
-        if (urlParts.search) {
-          finalUrl += urlParts.search;
-        }
-        
-        console.log('🔄 [AZURE AI SERVICE] URL redirected from:', url);
-        console.log('🔄 [AZURE AI SERVICE] URL redirected to:', finalUrl);
-        console.log('🔄 [AZURE AI SERVICE] Deployment:', deploymentName, 'Endpoint:', endpointPath);
-      } else {
-        console.log('⚠️ [AZURE AI SERVICE] Could not extract deployment name from URL, using original');
-        finalUrl = url;
-      }
-    } catch (error) {
-      console.error('❌ [AZURE AI SERVICE] Error parsing URL for redirection:', error);
-      console.log('⚠️ [AZURE AI SERVICE] Using original URL due to parsing error');
-      finalUrl = url;
-    }
-  }
-  
-  console.log('🔄 [AZURE AI SERVICE] Final URL:', finalUrl);
-  
-  // Only log request options in development or if explicitly enabled
-  if (process.env.NODE_ENV === 'development' || process.env.AZURE_AI_DEBUG) {
-    console.log('🔄 [AZURE AI SERVICE] Request options:', JSON.stringify(opts, null, 2));
-  }
-  
-  return fetch(finalUrl, { ...opts, agent: customAgent });
-};
-
 export class AzureAIService {
   private chatModel!: AzureChatOpenAI;
   private embeddingsModel!: AzureOpenAIEmbeddings;
@@ -128,6 +65,82 @@ export class AzureAIService {
   private initializeModels(): void {
     console.log('🔧 [AZURE AI SERVICE] Initializing Azure OpenAI models...');
 
+    const customFetch = (url: string, opts: any = {}) => {
+      // console.log('🔄 [AZURE AI SERVICE] Original URL:', url);
+
+      // // Check if this is a LangChain-generated URL that we need to redirect
+      // let finalUrl = url;
+
+      // // If the URL contains .openai.azure.com, replace it with the HSBC gateway
+      // if (url.includes('.openai.azure.com')) {
+      //   try {
+      //     // Extract the deployment name and API version from the URL
+      //     const urlParts = new URL(url);
+      //     const pathParts = urlParts.pathname.split('/').filter((part) => part.length > 0);
+
+      //     // Find deployment name and endpoint type
+      //     const deploymentIndex = pathParts.indexOf('deployments');
+      //     let deploymentName = '';
+      //     let endpointPath = '';
+
+      //     if (deploymentIndex !== -1 && deploymentIndex < pathParts.length - 1) {
+      //       deploymentName = pathParts[deploymentIndex + 1];
+      //       // Get everything after the deployment name
+      //       endpointPath = pathParts.slice(deploymentIndex + 2).join('/');
+      //     }
+
+      //     // Build the correct HSBC gateway URL
+      //     const baseGatewayUrl = process.env.AZURE_OPENAI_BASE_PATH;
+
+      //     // Construct the final URL
+      //     if (deploymentName) {
+      //       finalUrl = `${baseGatewayUrl}/${deploymentName}`;
+      //       if (endpointPath) {
+      //         finalUrl += `/${endpointPath}`;
+      //       }
+
+      //       // Preserve query parameters
+      //       if (urlParts.search) {
+      //         finalUrl += urlParts.search;
+      //       }
+
+      //       console.log('🔄 [AZURE AI SERVICE] URL redirected from:', url);
+      //       console.log('🔄 [AZURE AI SERVICE] URL redirected to:', finalUrl);
+      //       console.log('🔄 [AZURE AI SERVICE] Deployment:', deploymentName, 'Endpoint:', endpointPath);
+      //     } else {
+      //       console.log(
+      //         '⚠️ [AZURE AI SERVICE] Could not extract deployment name from URL, using original',
+      //       );
+      //       finalUrl = url;
+      //     }
+      //   } catch (error) {
+      //     console.error('❌ [AZURE AI SERVICE] Error parsing URL for redirection:', error);
+      //     console.log('⚠️ [AZURE AI SERVICE] Using original URL due to parsing error');
+      //     finalUrl = url;
+      //   }
+      // }
+
+      // console.log('🔄 [AZURE AI SERVICE] Final URL:', finalUrl);
+
+      opts.headers = {
+        'HSBC-Params': JSON.stringify({
+          req_from: this.config.openaiProjectId || 'spectra-testing',
+          type: 'chat',
+        }),
+        'Authorization-Type': 'openai',
+        Authorization: `Bearer ${this.config.azureOpenAIApiKey || this.config.openaiApiKey}`,
+        'Content-Type': 'application/json',
+      };
+
+      // Only log request options in development or if explicitly enabled
+      // if (process.env.NODE_ENV === 'development' || process.env.AZURE_AI_DEBUG) {
+      //   console.log('🔄 [AZURE AI SERVICE] Request options:', JSON.stringify(opts, null, 2));
+      // }
+      console.log('URL there', url);
+
+      return fetch(url, { ...opts, agent: customAgent });
+    };
+
     // Initialize Azure Chat OpenAI
     this.chatModel = new AzureChatOpenAI({
       azureOpenAIApiKey: this.config.azureOpenAIApiKey,
@@ -140,23 +153,20 @@ export class AzureAIService {
       maxRetries: 3,
       timeout: 60000,
       openAIApiKey: this.config.openaiApiKey,
-   
       configuration: {
         fetch: customFetch as any,
         fetchOptions: {
           agent: customAgent,
         },
-        defaultHeaders: {
-          'HSBC-Params': JSON.stringify({
-            req_from: this.config.openaiProjectId || 'spectra-testing',
-            type: 'chat',
-          }),
-          'Authorization-Type': 'openai',
-          Authorization: `Bearer ${this.config.azureOpenAIApiKey
-             || this.config.azureOpenAIApiKey
-            }`,
-          'Content-Type': 'application/json',
-        },
+        // defaultHeaders: {
+        //   'HSBC-Params': JSON.stringify({
+        //     req_from: this.config.openaiProjectId || 'spectra-testing',
+        //     type: 'chat',
+        //   }),
+        //   'Authorization-Type': 'openai',
+        //   Authorization: `Bearer ${this.config.azureOpenAIApiKey || this.config.azureOpenAIApiKey}`,
+        //   'Content-Type': 'application/json',
+        // },
       },
     });
 
@@ -176,21 +186,20 @@ export class AzureAIService {
         fetchOptions: {
           agent: customAgent,
         },
-        defaultHeaders: {
-          'HSBC-Params': JSON.stringify({
-            req_from: this.config.openaiProjectId || 'spectra-testing',
-            type: 'embedding',
-          }),
-          'Authorization-Type': 'openai',
-          Authorization: `Bearer ${this.config.openaiApiKey 
-            // || this.config.azureOpenAIApiKey
-          }`,
-          'Content-Type': 'application/json',
-        },
+        // defaultHeaders: {
+        //   'HSBC-Params': JSON.stringify({
+        //     req_from: this.config.openaiProjectId || 'spectra-testing',
+        //     type: 'embedding',
+        //   }),
+        //   'Authorization-Type': 'openai',
+        //   Authorization: `Bearer ${
+        //     this.config.openaiApiKey
+        //     // || this.config.azureOpenAIApiKey
+        //   }`,
+        //   'Content-Type': 'application/json',
+        // },
       },
     });
-
-   
   }
 
   /**
