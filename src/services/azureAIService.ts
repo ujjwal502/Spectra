@@ -342,6 +342,3 @@ export class AzureAIService {
     return results;
   }
 }
-
-// Export default instance for backward compatibility
-export const azureAIService = new AzureAIService();
