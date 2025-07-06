@@ -127,7 +127,7 @@ export class AzureAIService {
           req_from: this.config.openaiProjectId || 'spectra-testing',
           type: 'chat',
         }),
-        'Authorization-Type': 'openai',
+        'Authorization-Type': 'genai',
         Authorization: `Bearer ${this.config.azureOpenAIApiKey || this.config.openaiApiKey}`,
         'Content-Type': 'application/json',
       };
@@ -136,7 +136,8 @@ export class AzureAIService {
       // if (process.env.NODE_ENV === 'development' || process.env.AZURE_AI_DEBUG) {
       //   console.log('🔄 [AZURE AI SERVICE] Request options:', JSON.stringify(opts, null, 2));
       // }
-      console.log('URL there', url);
+      console.log('URL there', opts);
+
 
       return fetch(url, { ...opts, agent: customAgent });
     };
