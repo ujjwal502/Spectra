@@ -24,10 +24,7 @@ interface AzureOpenAIConfig {
   azureOpenAIBasePath?: string;
 }
 
-const customAgent = new https.Agent({
-  ca: fs.readFileSync(process.env.SSL_CERT_FILE || ''),
-  rejectUnauthorized: true,
-});
+
 
 export class AzureAIService {
   private chatModel!: AzureChatOpenAI;
@@ -64,6 +61,11 @@ export class AzureAIService {
 
   private initializeModels(): void {
     console.log('🔧 [AZURE AI SERVICE] Initializing Azure OpenAI models...');
+
+    const customAgent = new https.Agent({
+      ca: fs.readFileSync(process.env.SSL_CERT_FILE || ''),
+      rejectUnauthorized: true,
+    });
 
     const customFetch = (url: string, opts: any = {}) => {
       // console.log('🔄 [AZURE AI SERVICE] Original URL:', url);
