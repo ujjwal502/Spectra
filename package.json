@@ -10,7 +10,8 @@
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "generate:spec:demo-api": "ts-node src/index.ts generate-spec examples/demo-api ./examples/demo-api/enrichedOpenapi.json",
-    "test:demo-api:intelligent": "ts-node src/cli/enhanced.ts run-intelligent-testing examples/demo-api/openapi.json"
+    "test:demo-api:intelligent": "ts-node src/cli/enhanced.ts run-intelligent-testing examples/demo-api/openapi.json",
+    "setup:git-hooks": "./setup-git-hooks.sh"
   },
   "keywords": [
     "api",
