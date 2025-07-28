@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                              http://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+    <!-- Local repository location -->
+    <localRepository>${user.home}/.m2/repository</localRepository>
+
+    <!-- Offline mode - set to true if network is restricted -->
+    <offline>false</offline>
+
+    <!-- Plugin groups -->
+    <pluginGroups>
+        <pluginGroup>org.springframework.boot</pluginGroup>
+        <pluginGroup>org.apache.maven.plugins</pluginGroup>
+    </pluginGroups>
+
+    <!-- Proxy configuration (uncomment and configure if needed in HSBC environment) -->
+    <!--
+    <proxies>
+        <proxy>
+            <id>hsbc-proxy</id>
+            <active>true</active>
+            <protocol>http</protocol>
+            <host>proxy.hsbc.com</host>
+            <port>8080</port>
+            <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts>
+        </proxy>
+    </proxies>
+    -->
+
+    <!-- Server authentication (if needed for HSBC internal repositories) -->
+    <!--
+    <servers>
+        <server>
+            <id>hsbc-nexus</id>
+            <username>your-hsbc-username</username>
+            <password>your-hsbc-password</password>
+        </server>
+    </servers>
+    -->
+
+    <!-- Mirror configuration - Use HSBC's internal Nexus if available -->
+    <!--
+    <mirrors>
+        <mirror>
+            <id>hsbc-nexus-mirror</id>
+            <name>HSBC Internal Nexus</name>
+            <url>https://gbmt-nexus.prd.fx.gbm.cloud.uk.hsbc:8443/repository/maven-public/</url>
+            <mirrorOf>central</mirrorOf>
+        </mirror>
+    </mirrors>
+    -->
+
+    <!-- Profiles for different environments -->
+    <profiles>
+        <!-- Default profile for standard Maven Central -->
+        <profile>
+            <id>default</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <repositories>
+                <repository>
+                    <id>central</id>
+                    <name>Maven Central Repository</name>
+                    <url>https://repo1.maven.org/maven2</url>
+                    <layout>default</layout>
+                    <releases>
+                        <enabled>true</enabled>
+                        <updatePolicy>never</updatePolicy>
+                        <checksumPolicy>fail</checksumPolicy>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </repository>
+            </repositories>
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>central</id>
+                    <name>Maven Central Repository</name>
+                    <url>https://repo1.maven.org/maven2</url>
+                    <layout>default</layout>
+                    <releases>
+                        <enabled>true</enabled>
+                        <updatePolicy>never</updatePolicy>
+                        <checksumPolicy>fail</checksumPolicy>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </pluginRepository>
+            </pluginRepositories>
+        </profile>
+
+        <!-- HSBC environment profile (uncomment when needed) -->
+        <!--
+        <profile>
+            <id>hsbc</id>
+            <repositories>
+                <repository>
+                    <id>hsbc-nexus</id>
+                    <name>HSBC Nexus Repository</name>
+                    <url>https://gbmt-nexus.prd.fx.gbm.cloud.uk.hsbc:8443/repository/maven-public/</url>
+                    <layout>default</layout>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </repository>
+            </repositories>
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>hsbc-nexus</id>
+                    <name>HSBC Nexus Repository</name>
+                    <url>https://gbmt-nexus.prd.fx.gbm.cloud.uk.hsbc:8443/repository/maven-public/</url>
+                    <layout>default</layout>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                </pluginRepository>
+            </pluginRepositories>
+        </profile>
+        -->
+
+        <!-- Offline profile for completely offline builds -->
+        <profile>
+            <id>offline</id>
+            <properties>
+                <maven.test.skip>true</maven.test.skip>
+                <skipTests>true</skipTests>
+            </properties>
+        </profile>
+    </profiles>
+
+    <!-- Active profiles -->
+    <activeProfiles>
+        <activeProfile>default</activeProfile>
+    </activeProfiles>
+
+</settings> 

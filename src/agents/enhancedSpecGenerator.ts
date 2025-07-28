@@ -1,6 +1,6 @@
-import { ApiStructure, CodebaseAnalysisResult, SpecGeneratorOptions } from '../types';
-import { AIService } from '../services/aiService';
-import { ChatOpenAI } from '@langchain/openai';
+import { SpecGeneratorOptions } from '../types';
+import { AzureAIService } from '../services/azureAIService';
+import { AzureChatOpenAI } from '@langchain/openai';
 import fs from 'fs';
 import path from 'path';
 
@@ -48,8 +48,8 @@ interface SpecGenerationAgentState {
  * but avoids complex typing issues by using a simpler orchestration pattern
  */
 export class EnhancedSpecGenerator {
-  private aiService: AIService;
-  private llm: ChatOpenAI;
+  private azureAIService: AzureAIService;
+  private llm: AzureChatOpenAI;
   private options: SpecGeneratorOptions;
 
   constructor(options?: Partial<SpecGeneratorOptions>) {
@@ -62,11 +62,11 @@ export class EnhancedSpecGenerator {
       ...options,
     };
 
-    this.aiService = new AIService();
-    this.llm = new ChatOpenAI({
-      model: process.env.OPENAI_MODEL || 'gpt-4',
-      temperature: 1, // Use default temperature for compatibility
-    });
+    this.azureAIService = new AzureAIService();
+    this.llm = this.azureAIService.getChatModel();
+
+    console.log('🔧 [ENHANCED SPEC GENERATOR] Initialized with Azure OpenAI');
+    console.log(`📊 [AZURE CONFIG] ${JSON.stringify(this.azureAIService.getConfig(), null, 2)}`);
   }
 
   /**
