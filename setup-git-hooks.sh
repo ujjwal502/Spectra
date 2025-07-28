@@ -66,9 +66,20 @@ ask_yes_no() {
     local question="$1"
     local response
     
+    # Check if we can read from terminal
+    if [[ ! -t 0 ]] && [[ ! -r /dev/tty ]]; then
+        echo -e "${YELLOW}⚠️  Running in non-interactive mode, defaulting to 'No'${NC}"
+        return 1
+    fi
+    
     while true; do
         echo -e "${BLUE}${question}${NC} ${YELLOW}[y/N]${NC}: "
-        read -r response
+        # Use /dev/tty to ensure we read from the terminal even in git hook context
+        if [[ -r /dev/tty ]]; then
+            read -r response < /dev/tty
+        else
+            read -r response
+        fi
         case $response in
             [Yy]* ) return 0;;
             [Nn]* ) return 1;;
