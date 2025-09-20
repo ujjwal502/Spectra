@@ -7,7 +7,11 @@ export function addEnhancedCommands(program: Command): void {
     .command('run-intelligent-testing')
     .description('Run intelligent testing on a given API spec')
     .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
-    .action(async (apiSpecPath: string) => {
+    .option('--code-root <path>', 'Root directory of the API codebase for context')
+    .option('--context-depth <n>', 'Approximate context token budget per prompt', '1200')
+    .option('--self-heal', 'Enable one or more self-heal retries on failure', false)
+    .option('--max-retries <n>', 'Max retries for self-heal', '1')
+    .action(async (apiSpecPath: string, opts: any) => {
       try {
         console.log('Starting intelligent testing...');
         console.log('📄 API Spec:', apiSpecPath);
@@ -24,7 +28,12 @@ export function addEnhancedCommands(program: Command): void {
         const apiSpec = JSON.parse(specContent);
 
         console.log('🧠 Initializing intelligent testing agent...');
-        const agent = new LangGraphTestingAgent();
+        const agent = new LangGraphTestingAgent({
+          codeRoot: opts.codeRoot,
+          contextDepth: parseInt(opts.contextDepth || '1200', 10),
+          selfHeal: !!opts.selfHeal,
+          maxRetries: parseInt(opts.maxRetries || '1', 10),
+        });
 
         console.log('🎯 Executing intelligent testing workflow...');
 

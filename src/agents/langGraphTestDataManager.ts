@@ -1,4 +1,5 @@
 import { EndpointInfo, SystemMap, TestScenario } from '../types/langGraphTypes';
+import { ValidationContext } from '../utils/codeContext';
 import { faker } from '@faker-js/faker';
 
 /**
@@ -63,6 +64,7 @@ export class LangGraphTestDataManager {
       | 'duplicate_email'
       | 'invalid_department',
     systemMap: SystemMap,
+    validation?: ValidationContext,
   ): any {
     const testData: any = {};
 
@@ -73,7 +75,7 @@ export class LangGraphTestDataManager {
     }
 
     if (endpoint.requestBody && endpoint.method !== 'GET') {
-      const bodyData = this.generateRequestBodyData(endpoint.requestBody, dataType);
+      const bodyData = this.generateRequestBodyData(endpoint.requestBody, dataType, validation);
       Object.assign(testData, bodyData);
     }
 
@@ -87,10 +89,11 @@ export class LangGraphTestDataManager {
     switch (dataType) {
       case 'valid':
         if (param.name === 'id') {
-          return this.testUsers[Math.floor(Math.random() * this.testUsers.length)].id;
+          // Use seeded faker for deterministic selection across runs
+          return (this.fakerArrayElement(this.testUsers) as any).id;
         }
         if (param.name === 'department') {
-          return this.validDepartments[Math.floor(Math.random() * this.validDepartments.length)];
+          return this.fakerArrayElement(this.validDepartments);
         }
         if (param.validValues && param.validValues.length > 0) {
           return param.validValues[0];
@@ -114,74 +117,113 @@ export class LangGraphTestDataManager {
 
       case 'numeric_boundary':
         if (param.type === 'integer') {
-          return Math.random() > 0.5 ? 1 : 1000;
+          return this.fakerBoolean() ? 1 : 1000;
         }
         return this.getDefaultValidValue(param);
 
       default:
+        // Prefer existing IDs to avoid 404 on update/delete unless explicitly testing not_found
+        if (param.name === 'id') {
+          return (this.fakerArrayElement(this.testUsers) as any).id;
+        }
         return this.getDefaultValidValue(param);
     }
+  }
+
+  // Helpers to proxy through faker for deterministic randomness
+  private fakerArrayElement<T>(arr: T[]): T {
+    return (faker.helpers.arrayElement as any)(arr);
+  }
+
+  private fakerBoolean(): boolean {
+    return (faker.datatype.boolean as any)();
   }
 
   /**
    * Generate request body data with proper validation compliance
    */
-  private generateRequestBodyData(requestBody: any, dataType: string): any {
+  private generateRequestBodyData(requestBody: any, dataType: string, validation?: ValidationContext): any {
     const data: any = {};
 
     switch (dataType) {
       case 'valid':
-        return this.generateValidUserData();
+        return this.applyValidationHints(this.generateValidUserData(), validation);
 
       case 'invalid':
-        return {
+        return this.applyValidationHints({
           name: '',
           email: faker.lorem.word(),
           age: faker.number.int({ min: 10, max: 17 }),
           department: faker.company.buzzNoun(),
-        };
+        }, validation);
 
       case 'max_length':
-        return {
+        return this.applyValidationHints({
           name: faker.lorem.words(10).substring(0, 50),
           email: `${faker.lorem.words(5).replace(/\s/g, '')}.${faker.lorem.words(3).replace(/\s/g, '')}@example.com`,
           age: 100,
           department: faker.helpers.arrayElement(this.validDepartments),
-        };
+        }, validation);
 
       case 'min_length':
-        return {
+        return this.applyValidationHints({
           name: faker.person.firstName().substring(0, 2),
           email: `${faker.string.alpha(1)}@${faker.string.alpha(1)}.co`,
           age: 18,
           department: faker.helpers.arrayElement(this.validDepartments),
-        };
+        }, validation);
 
       case 'missing_required':
-        return {
+        return this.applyValidationHints({
           age: faker.number.int({ min: 18, max: 65 }),
           department: faker.helpers.arrayElement(this.validDepartments),
-        };
+        }, validation);
 
       case 'duplicate_email':
-        return {
+        return this.applyValidationHints({
           name: faker.person.fullName(),
           email: this.testUsers[0].email,
           age: faker.number.int({ min: 18, max: 65 }),
           department: faker.helpers.arrayElement(this.validDepartments),
-        };
+        }, validation);
 
       case 'invalid_department':
-        return {
+        return this.applyValidationHints({
           name: faker.person.fullName(),
           email: faker.internet.email().toLowerCase(),
           age: faker.number.int({ min: 18, max: 65 }),
           department: faker.company.buzzNoun(),
-        };
+        }, validation);
 
       default:
-        return this.generateValidUserData();
+        return this.applyValidationHints(this.generateValidUserData(), validation);
     }
+  }
+
+  private applyValidationHints(base: any, validation?: ValidationContext): any {
+    if (!validation || !validation.rules || validation.rules.length === 0) return base;
+    const adjusted = { ...base };
+    for (const rule of validation.rules) {
+      if (rule.required) {
+        Object.keys(adjusted).forEach((k) => {
+          if (adjusted[k] === undefined || adjusted[k] === null || adjusted[k] === '') {
+            adjusted[k] = 'value';
+          }
+        });
+      }
+      if (rule.minLength && typeof adjusted['name'] === 'string') {
+        while ((adjusted['name'] as string).length < rule.minLength) {
+          adjusted['name'] += 'x';
+        }
+      }
+      if (rule.format === 'email') {
+        adjusted['email'] = adjusted['email'] || faker.internet.email().toLowerCase();
+        if (typeof adjusted['email'] === 'string' && !adjusted['email'].includes('@')) {
+          adjusted['email'] = faker.internet.email().toLowerCase();
+        }
+      }
+    }
+    return adjusted;
   }
 
   /**

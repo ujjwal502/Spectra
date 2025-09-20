@@ -5,6 +5,11 @@ export interface TestingState {
   // Understanding Layer
   apiSpec: OpenAPIV3.Document;
   systemMap?: SystemMap;
+  // Optional code context
+  codeContext?: {
+    codeRoot?: string;
+    available: boolean;
+  };
 
   // Testing Layer
   testScenarios: TestScenario[];
@@ -28,6 +33,17 @@ export interface SystemMap {
   schemas: SchemaInfo[];
   dataFlow: DataFlowInfo[];
   dependencies: DependencyInfo[];
+  baseUrl?: string;
+  // NEW: lightweight code references and auth hints
+  codeRefs?: Record<string, {
+    implSnippets: string[];
+    middlewares: string[];
+  }>;
+  auth?: {
+    required?: boolean;
+    type?: 'jwt' | 'basic' | 'session';
+    header?: string;
+  };
 }
 
 export interface EndpointInfo {
@@ -37,6 +53,15 @@ export interface EndpointInfo {
   requestBody?: SchemaInfo;
   responses: ResponseInfo[];
   relatedEndpoints: string[];
+  metadata?: {
+    [key: string]: any;
+    baseUrl?: string;
+    // NEW: link back to code context
+    code?: {
+      hasImpl?: boolean;
+      dtoNames?: string[];
+    };
+  };
 }
 
 export interface ParameterInfo {

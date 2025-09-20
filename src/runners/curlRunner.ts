@@ -48,7 +48,7 @@ export class CurlRunner {
 
       const url = this.constructUrl(endpoint, request);
 
-      const curlCommand = this.buildCurlCommand(url, method, request, files);
+      const curlCommand = this.buildCurlCommand(url, method, request, files, (testCase as any).headers);
       console.log('🚀 [CURL-RUNNER] Generated cURL command:', curlCommand);
 
       const scriptPath = this.createTempScript(id, curlCommand);
@@ -83,7 +83,11 @@ export class CurlRunner {
       console.log('🚀 [CURL-RUNNER] Status validation result:', statusAssertion);
       assertions.push(statusAssertion);
 
-      if (expectedResponse?.schema && body) {
+      // Skip schema validation if response is not JSON
+      const contentType = (headers['Content-Type'] || headers['content-type'] || '').toLowerCase();
+      const isJson = contentType.includes('application/json');
+
+      if (expectedResponse?.schema && body && isJson) {
         try {
           const parsedBody = typeof body === 'string' && body.trim() ? JSON.parse(body) : body;
 
@@ -116,7 +120,7 @@ export class CurlRunner {
         assertions.push({
           name: 'Schema validation',
           success: true,
-          info: 'No schema validation performed (no schema specified)',
+          info: isJson ? 'No schema validation performed (no schema specified)' : 'Skipped schema validation (non-JSON response)',
         });
       }
 
@@ -169,6 +173,7 @@ export class CurlRunner {
    */
   private constructUrl(endpoint: string, request?: any): string {
     console.log('🔧 [CURL-RUNNER] Constructing URL for endpoint:', endpoint);
+    console.log('🔧 [CURL-RUNNER] Base URL from runner:', this.baseUrl);
     console.log('🔧 [CURL-RUNNER] Request object:', JSON.stringify(request, null, 2));
 
     if (endpoint.startsWith('http')) {
@@ -224,19 +229,25 @@ export class CurlRunner {
     (this as any)._usedPathParams = usedPathParams;
 
     console.log('🔧 [CURL-RUNNER] Final constructed URL:', finalUrl);
+    console.log('🔧 [CURL-RUNNER] ========================================');
     return finalUrl;
   }
 
   /**
    * Build a CURL command for the given test case
    */
-  private buildCurlCommand(url: string, method: string, request?: any, files?: any[]): string {
+  private buildCurlCommand(url: string, method: string, request?: any, files?: any[], headers?: Record<string, string>): string {
     let command = `curl -s -w "\\n%{http_code}" -X ${method.toUpperCase()} "${url}"`;
 
     command += ` --max-time ${Math.ceil(this.timeout / 1000)}`;
 
     command += ` -H "Content-Type: application/json"`;
     command += ` -H "Accept: application/json"`;
+    if (headers) {
+      for (const [hk, hv] of Object.entries(headers)) {
+        command += ` -H "${hk}: ${hv}"`;
+      }
+    }
 
     if (files && files.length > 0) {
       command = command.replace(/-H "Content-Type: application\/json"/, '');

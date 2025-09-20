@@ -19,19 +19,33 @@ import {
 } from '../types/langGraphTypes';
 import { LangGraphGherkinGenerator } from './langGraphGherkinGenerator';
 import { LangGraphTestDataManager } from './langGraphTestDataManager';
+import { buildCodeIndex, getEndpointContext, getValidationContext, getAuthContext, summarizeForLLM } from '../utils/codeContext';
+import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
+import { v4 as uuidv4 } from 'uuid';
+import { GherkinFeature } from '../types/langGraphTypes';
+import axios from 'axios';
 
 export class LangGraphTestingAgent {
   private model: ChatOpenAI;
   private gherkinGenerator: LangGraphGherkinGenerator;
   private testDataManager: LangGraphTestDataManager;
+  private codeRoot?: string;
+  private contextDepth: number = 1200;
+  private selfHeal: boolean = false;
+  private maxRetries: number = 1;
+  private currentApiSpec?: OpenAPIV3.Document;
 
-  constructor() {
+  constructor(options?: { codeRoot?: string; contextDepth?: number; selfHeal?: boolean; maxRetries?: number }) {
     this.model = new ChatOpenAI({
       modelName: 'gpt-4',
-      temperature: 0.1,
+      temperature: 0,
     });
     this.gherkinGenerator = new LangGraphGherkinGenerator();
     this.testDataManager = new LangGraphTestDataManager();
+    this.codeRoot = options?.codeRoot;
+    if (options?.contextDepth && Number.isFinite(options.contextDepth)) this.contextDepth = options.contextDepth;
+    if (typeof options?.selfHeal === 'boolean') this.selfHeal = options.selfHeal;
+    if (options?.maxRetries && Number.isFinite(options.maxRetries)) this.maxRetries = options.maxRetries;
   }
 
   /**
@@ -43,6 +57,9 @@ export class LangGraphTestingAgent {
   ): Promise<TestingState> {
     console.log('🚀 [Spectra TESTING] Starting intelligent API testing workflow...');
 
+    // Keep a reference to the API spec for schema resolution
+    this.currentApiSpec = apiSpec;
+
     let state: TestingState = {
       apiSpec,
       testScenarios: [],
@@ -53,23 +70,41 @@ export class LangGraphTestingAgent {
       messages: ['Starting intelligent API testing workflow'],
     };
 
-    // Layer 1: Understanding Layer
-    state = await this.understandingLayer(state);
+    // Optional: Reset backend test data only when explicitly configured
+    if (process.env.SPECTRA_RESET_URL) {
+      await this.tryResetServerData(apiSpec);
+    }
 
-    // Layer 2: Testing Layer (scenario generation)
-    state = await this.testingLayer(state);
-
-    // Layer 3: Gherkin Generation Layer (NEW)
-    state = await this.gherkinLayer(state);
-
-    // Layer 4: Execution Layer (specialized agents)
-    state = await this.functionalTester(state);
-    state = await this.securityTester(state);
-    state = await this.boundaryTester(state);
-    state = await this.errorTester(state);
-
-    // Layer 5: Analysis Layer
-    state = await this.analysisLayer(state);
+    // Try LangGraph-driven workflow first
+    const graph = this.buildTestingGraph();
+    if (graph) {
+      try {
+        const runId = uuidv4();
+        console.log("Langgraph state before invoke");
+        state = (await graph.invoke(state, { configurable: { thread_id: runId } })) as TestingState;
+      } catch (e) {
+        console.log('⚠️ [Spectra TESTING] LangGraph run failed, falling back to sequential flow:', e);
+        // Fallback to existing sequential layers
+        state = await this.understandingLayer(state);
+        state = await this.testingLayer(state);
+        state = await this.gherkinLayer(state);
+        state = await this.functionalTester(state);
+        state = await this.securityTester(state);
+        state = await this.boundaryTester(state);
+        state = await this.errorTester(state);
+        state = await this.analysisLayer(state);
+      }
+    } else {
+      // If graph couldn't be built, proceed with existing sequential layers
+      state = await this.understandingLayer(state);
+      state = await this.testingLayer(state);
+      state = await this.gherkinLayer(state);
+      state = await this.functionalTester(state);
+      state = await this.securityTester(state);
+      state = await this.boundaryTester(state);
+      state = await this.errorTester(state);
+      state = await this.analysisLayer(state);
+    }
 
     // Generate and save reports
     if (outputDir) {
@@ -101,6 +136,87 @@ export class LangGraphTestingAgent {
   }
 
   /**
+   * Attempt to reset backend test data to ensure consistent runs.
+   * Looks for a reset-like path in the OpenAPI spec; falls back to demo path.
+   */
+  private async tryResetServerData(apiSpec: OpenAPIV3.Document): Promise<void> {
+    try {
+      const baseUrl = (apiSpec.servers && apiSpec.servers[0]?.url) || 'http://localhost:8081';
+      const cfg = process.env.SPECTRA_RESET_URL || '';
+      const fullUrl = cfg.startsWith('http')
+        ? cfg
+        : `${baseUrl.replace(/\/$/, '')}${cfg ? (cfg.startsWith('/') ? '' : '/') + cfg : ''}`;
+      console.log(`🔄 [Spectra TESTING] Attempting test data reset at: ${fullUrl}`);
+
+      // Use POST by convention; ignore failures silently
+      await axios.post(fullUrl).catch(() => undefined);
+    } catch {
+      // Non-fatal: proceed without reset
+    }
+  }
+
+  /**
+   * Build LangGraph state graph for testing workflow
+   */
+  private buildTestingGraph() {
+    try {
+      const TestState = Annotation.Root({
+        apiSpec: Annotation<OpenAPIV3.Document>(),
+        systemMap: Annotation<SystemMap | undefined>(),
+        testScenarios: Annotation<TestScenario[]>(),
+        testResults: Annotation<TestResult[]>(),
+        gherkinFeatures: Annotation<GherkinFeature[]>(),
+        gherkinSummary: Annotation<any>(),
+        analysis: Annotation<TestAnalysis | undefined>(),
+        recommendations: Annotation<string[]>(),
+        currentPhase: Annotation<'understanding' | 'testing' | 'gherkin' | 'execution' | 'analysis' | 'complete'>(),
+        messages: Annotation<string[]>(),
+      });
+
+      const graph = new StateGraph(TestState)
+        .addNode('understanding', async (s: TestingState) => {
+          return await this.understandingLayer(s);
+        })
+        .addNode('testing', async (s: TestingState) => {
+          return await this.testingLayer(s);
+        })
+        .addNode('gherkin', async (s: TestingState) => {
+          return await this.gherkinLayer(s);
+        })
+        .addNode('execute_functional', async (s: TestingState) => {
+          return await this.functionalTester(s);
+        })
+        .addNode('execute_security', async (s: TestingState) => {
+          return await this.securityTester(s);
+        })
+        .addNode('execute_boundary', async (s: TestingState) => {
+          return await this.boundaryTester(s);
+        })
+        .addNode('execute_error', async (s: TestingState) => {
+          return await this.errorTester(s);
+        })
+        .addNode('analyze', async (s: TestingState) => {
+          return await this.analysisLayer(s);
+        })
+        .addEdge(START, 'understanding')
+        .addEdge('understanding', 'testing')
+        .addEdge('testing', 'gherkin')
+        .addEdge('gherkin', 'execute_functional')
+        .addEdge('execute_functional', 'execute_security')
+        .addEdge('execute_security', 'execute_boundary')
+        .addEdge('execute_boundary', 'execute_error')
+        .addEdge('execute_error', 'analyze')
+        .addEdge('analyze', END)
+        .compile({ checkpointer: new MemorySaver() });
+
+      return graph;
+    } catch (e) {
+      console.log('⚠️ [Spectra TESTING] Failed to initialize LangGraph testing workflow:', e);
+      return null;
+    }
+  }
+
+  /**
    * UNDERSTANDING LAYER
    * Maps the API system, understands schemas, data flows, and dependencies
    */
@@ -109,6 +225,30 @@ export class LangGraphTestingAgent {
 
     const systemMap = await this.analyzeApiSystem(state.apiSpec);
 
+    // Optional: attach code context
+    let codeAvailable = false;
+    try {
+      if (this.codeRoot) {
+        console.log(`🔎 [CODE CONTEXT] Building code index from: ${this.codeRoot}`);
+        const index = await buildCodeIndex(this.codeRoot);
+        const auth = getAuthContext(index) || undefined;
+        const codeRefs: Record<string, { implSnippets: string[]; middlewares: string[] }> = {};
+        for (const ep of systemMap.endpoints) {
+          const ctx = getEndpointContext(index, ep.method, ep.path);
+          codeRefs[`${ep.method} ${ep.path}`] = {
+            implSnippets: ctx.implSnippets.slice(0, 3),
+            middlewares: ctx.middlewares.slice(0, 3),
+          };
+          ep.metadata = { ...(ep.metadata || {}), code: { hasImpl: ctx.implSnippets.length > 0 } };
+        }
+        systemMap.codeRefs = codeRefs;
+        if (auth) systemMap.auth = { required: true, ...auth };
+        codeAvailable = true;
+      }
+    } catch (e) {
+      console.log('⚠️ [CODE CONTEXT] Failed to build/attach code context:', e);
+    }
+
     console.log(`🔍 [UNDERSTANDING LAYER] Found ${systemMap.endpoints.length} endpoints`);
     console.log(`🔍 [UNDERSTANDING LAYER] Identified ${systemMap.schemas.length} schemas`);
     console.log(`🔍 [UNDERSTANDING LAYER] Mapped ${systemMap.dataFlow.length} data flows`);
@@ -116,6 +256,7 @@ export class LangGraphTestingAgent {
     return {
       ...state,
       systemMap,
+      codeContext: { codeRoot: this.codeRoot, available: codeAvailable },
       currentPhase: 'testing',
       messages: [
         ...state.messages,
@@ -188,18 +329,83 @@ export class LangGraphTestingAgent {
     const functionalScenarios = state.testScenarios.filter((s) => s.type === 'functional');
     const results: TestResult[] = [];
 
-    for (const scenario of functionalScenarios) {
+    // Prefetch existing IDs for resources with {id} to reduce 404s
+    let existingIds: Array<string | number> = [];
+    try {
+      const baseUrl = this.extractBaseUrlFromSystemMap(state.systemMap!);
+      existingIds = await this.fetchExistingResourceIds(state.systemMap!, baseUrl);
+      console.log(`📚 [FUNCTIONAL TESTER] Prefetched existing IDs:`, existingIds);
+    } catch (e) {
+      console.log('⚠️ [FUNCTIONAL TESTER] Failed to prefetch existing IDs:', e);
+    }
+
+    // Simple chaining: create → read → update → delete using a shared created ID
+    let createdId: string | number | undefined;
+
+    // Stable order to promote chaining: POST -> GET {id} -> PUT -> DELETE -> GET list
+    const ordered = functionalScenarios.sort((a, b) => {
+      const rank = (s: TestScenario) =>
+        s.method === 'POST' ? 0 : s.method === 'GET' && s.endpoint.includes('{id}') ? 1 : s.method === 'PUT' ? 2 : s.method === 'DELETE' ? 3 : 4;
+      return rank(a) - rank(b);
+    });
+
+    for (const scenario of ordered) {
+      // Inject a valid existing ID for successful functional flows with {id}
+      if (
+        scenario.endpoint.includes('{id}') &&
+        (scenario.expectedOutcome?.statusCode === 200 || scenario.expectedOutcome?.statusCode === 204)
+      ) {
+        if (!scenario.testData || typeof scenario.testData !== 'object') (scenario as any).testData = {};
+        if (createdId !== undefined) {
+          (scenario as any).testData.id = createdId;
+          console.log(`🔗 [FUNCTIONAL CHAIN] Using created id=${createdId} for scenario ${scenario.id}`);
+        } else if (!('id' in scenario.testData) && existingIds.length > 0) {
+          (scenario as any).testData.id = existingIds[0];
+          console.log(`🔧 [FUNCTIONAL TESTER] Injected existing id=${existingIds[0]} into scenario ${scenario.id}`);
+        }
+      }
+
       const result = await this.executeTestScenario(scenario, state.systemMap!);
       results.push(result);
       console.log(
         `✅ [FUNCTIONAL TESTER] ${scenario.description}: ${result.success ? 'PASS' : 'FAIL'}`,
       );
+
+      // Capture ID after successful create
+      const isCreate = scenario.method === 'POST' && /(users|items|records|entities)/i.test(scenario.endpoint);
+      if (isCreate && result.success) {
+        const body = result.response?.body;
+        const newId = body?.id ?? body?.ID ?? body?._id;
+        if (newId !== undefined) {
+          createdId = newId;
+          console.log(`🆔 [FUNCTIONAL CHAIN] Captured created id=${createdId}`);
+        }
+      }
     }
 
     return {
       ...state,
       testResults: [...state.testResults, ...results],
     };
+  }
+
+  // Attempt to fetch existing resource IDs from a collection endpoint (e.g., GET /users)
+  private async fetchExistingResourceIds(systemMap: SystemMap, baseUrl: string): Promise<Array<string | number>> {
+    try {
+      const listEndpoint = systemMap.endpoints.find(
+        (e) => e.method === 'GET' && !e.path.includes('{') && /users|items|records|entities/i.test(e.path),
+      );
+      if (!listEndpoint) return [];
+      const url = `${baseUrl}${listEndpoint.path.startsWith('/') ? '' : '/'}${listEndpoint.path}`;
+      const resp = await axios.get(url, { timeout: 5000 });
+      const data = resp.data;
+      if (Array.isArray(data)) {
+        return data.map((d) => (typeof d === 'object' && d ? (d.id ?? d.ID ?? d._id) : undefined)).filter((v) => v !== undefined);
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
   }
 
   /**
@@ -294,6 +500,41 @@ export class LangGraphTestingAgent {
     };
   }
 
+  /**
+   * Extract base URL from OpenAPI spec servers section
+   */
+  private extractBaseUrlFromApiSpec(apiSpec: OpenAPIV3.Document): string {
+    if (apiSpec.servers && apiSpec.servers.length > 0) {
+      const server = apiSpec.servers[0];
+      const serverUrl = server.url;
+      console.log(`🌐 [SPEC EXTRACTION] Found server URL in API spec: ${serverUrl}`);
+      return serverUrl;
+    }
+    
+    // Fallback to default URLs - try Node.js first, then Java
+    const nodeUrl = 'http://localhost:3000';
+    console.log(`🌐 [SPEC EXTRACTION] No servers found in API spec, using Node.js default: ${nodeUrl}`);
+    return nodeUrl;
+  }
+
+  /**
+   * Extract base URL dynamically from system map and API spec
+   */
+  private extractBaseUrlFromSystemMap(systemMap: SystemMap): string {
+    // Look for stored server information in the system map
+    if (systemMap.baseUrl) {
+      console.log(`🌐 [URL EXTRACTION] Found base URL in system map: ${systemMap.baseUrl}`);
+      return systemMap.baseUrl;
+    }
+    
+    // Fallback to default URLs - try Node.js first, then Java
+    const nodeUrl = 'http://localhost:3000';
+    const javaUrl = 'http://localhost:8081';
+    
+    console.log(`🌐 [URL EXTRACTION] No base URL found in system map, trying Node.js default: ${nodeUrl}`);
+    return nodeUrl;
+  }
+
   // Helper methods (to be implemented in next steps)
   private async analyzeApiSystem(apiSpec: OpenAPIV3.Document): Promise<SystemMap> {
     console.log('🔍 [AI ANALYSIS] Using AI to analyze API system architecture...');
@@ -302,6 +543,10 @@ export class LangGraphTestingAgent {
     const schemas: SchemaInfo[] = [];
     const dataFlow: DataFlowInfo[] = [];
     const dependencies: DependencyInfo[] = [];
+
+    // Extract base URL from OpenAPI spec servers
+    const baseUrl = this.extractBaseUrlFromApiSpec(apiSpec);
+    console.log(`🌐 [AI ANALYSIS] Extracted base URL from API spec: ${baseUrl}`);
 
     // Extract and analyze endpoints
     if (apiSpec.paths) {
@@ -341,6 +586,7 @@ export class LangGraphTestingAgent {
       schemas,
       dataFlow,
       dependencies,
+      baseUrl,
     };
   }
 
@@ -888,7 +1134,9 @@ export class LangGraphTestingAgent {
         intent: 'Verify that the system handles numeric edge cases correctly',
         testData: await this.generateValidTestData(endpoint, 'numeric_boundary', systemMap),
         expectedOutcome: {
-          statusCode: 200,
+          // If this is a DELETE on an id path, expect 404 for out-of-range/non-existent values
+          statusCode:
+            endpoint.method === 'DELETE' && endpoint.path.includes('{id}') ? 404 : 200,
           schema: endpoint.responses.find((r) => r.statusCode === 200)?.schema,
         },
         dependencies: [],
@@ -1123,14 +1371,42 @@ export class LangGraphTestingAgent {
       // Create intelligent test case using our contextual understanding
       const intelligentTestCase = this.createIntelligentTestCase(scenario, systemMap);
 
-      // Execute with context-aware settings
-      curlRunner.setBaseUrl('http://localhost:8081'); // Demo API URL
-      const result = await curlRunner.executeTest(intelligentTestCase);
+      // Dynamically extract base URL from system map
+      const baseUrl = this.extractBaseUrlFromSystemMap(systemMap);
+      console.log(`🌐 [SMART EXECUTION] Using dynamic base URL: ${baseUrl}`);
+      curlRunner.setBaseUrl(baseUrl);
+      let result = await curlRunner.executeTest(intelligentTestCase);
+
+      // Self-heal loop
+      if (!result.success && this.selfHeal) {
+        for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+          console.log(`🛠️ [SELF-HEAL] Attempt ${attempt}/${this.maxRetries}`);
+          try {
+            const refKey = `${scenario.method} ${scenario.endpoint}`;
+            const codeRef = systemMap.codeRefs?.[refKey];
+            const ctxSummary = summarizeForLLM({ codeRef, response: result.response }, this.contextDepth);
+            const fixPrompt = `Given the API request failed, suggest a minimal JSON delta to adjust headers or request fields to likely satisfy validation/auth based on code hints. Respond with only JSON { headers?: object, request?: object }.
+Context:\n${ctxSummary}\nOriginal:${JSON.stringify(intelligentTestCase, null, 2)}`;
+            const fixResp = await this.model.invoke(fixPrompt);
+            const fix = this.parseAIResponse((fixResp.content as string) || '{}') || {};
+            if (fix.headers && typeof fix.headers === 'object') {
+              intelligentTestCase.headers = { ...(intelligentTestCase.headers || {}), ...fix.headers };
+            }
+            if (fix.request && typeof fix.request === 'object') {
+              intelligentTestCase.request = { ...(intelligentTestCase.request || {}), ...fix.request };
+            }
+            result = await curlRunner.executeTest(intelligentTestCase);
+            if (result.success) break;
+          } catch (e) {
+            console.log('⚠️ [SELF-HEAL] Failed to heal:', e);
+          }
+        }
+      }
 
       // Analyze result with AI-powered insights
       const insights = await this.analyzeTestExecution(scenario, result, systemMap);
 
-      const success = this.evaluateTestSuccess(scenario, result, insights);
+      const success = this.evaluateTestSuccess(scenario, result, insights, systemMap);
       const duration = Date.now() - startTime;
 
       console.log(
@@ -1180,14 +1456,21 @@ export class LangGraphTestingAgent {
     }
 
     // Create a properly formatted test case for the cURL runner
+    // Resolve/dereference schemas from OpenAPI if present (handles nested refs and arrays)
+    let resolvedSchema = scenario.expectedOutcome.schema;
+    if (resolvedSchema && typeof resolvedSchema === 'object') {
+      resolvedSchema = this.deepDerefSchema(resolvedSchema);
+    }
+
     const testCase: any = {
+      id: scenario.id,
       name: scenario.description,
       endpoint: endpoint,
       method: scenario.method.toLowerCase(),
       request: Object.keys(intelligentRequest).length > 0 ? intelligentRequest : undefined,
-      expected: {
-        status: scenario.expectedOutcome.statusCode,
-        schema: scenario.expectedOutcome.schema,
+      expectedResponse: {
+        status: this.deriveAllowedStatuses(scenario, systemMap),
+        schema: resolvedSchema,
       },
     };
 
@@ -1195,11 +1478,102 @@ export class LangGraphTestingAgent {
       endpoint: testCase.endpoint,
       method: testCase.method,
       hasRequestData: !!testCase.request,
-      expectedStatus: testCase.expected.status,
+      expectedStatus: testCase.expectedResponse ? testCase.expectedResponse.status : undefined,
       requestKeys: testCase.request ? Object.keys(testCase.request) : [],
     });
 
     return testCase;
+  }
+
+  // Derive allowed statuses from spec and scenario intent with safe fallbacks
+  private deriveAllowedStatuses(scenario: TestScenario, systemMap: SystemMap): number | number[] {
+    const primary = scenario.expectedOutcome?.statusCode;
+    const method = scenario.method.toUpperCase();
+
+    // Collect advertised 2xx for this endpoint from system map if available
+    const ep = systemMap.endpoints.find((e) => e.path === scenario.endpoint && e.method === method);
+    const advertised2xx = ep
+      ? ep.responses
+          .map((r) => (typeof r.statusCode === 'number' ? r.statusCode : parseInt(String(r.statusCode), 10)))
+          .filter((code) => code >= 200 && code < 300)
+      : [];
+
+    // If scenario is error-type, keep strict expected code
+    if (scenario.type === 'error') return primary ?? 400;
+
+    // For functional and security: allow common alternates if spec isn't explicit
+    const commonByMethod: Record<string, number[]> = {
+      POST: [201, 200],
+      PUT: [200, 204],
+      PATCH: [200, 204],
+      DELETE: [204, 200],
+      GET: [200],
+    };
+
+    const commons = commonByMethod[method] || [200];
+    const allowed = new Set<number>();
+    if (primary) allowed.add(primary);
+    commons.forEach((c) => allowed.add(c));
+    advertised2xx.forEach((c) => allowed.add(c));
+
+    return Array.from(allowed);
+  }
+
+  // Resolve simple local component refs (e.g., "#/components/schemas/User")
+  private resolveSchemaRef(ref: string): any | undefined {
+    try {
+      if (!ref || !this.currentApiSpec) return undefined;
+      const match = ref.match(/^#\/(components)\/schemas\/([^\s#]+)$/);
+      if (!match) return undefined;
+      const schemaName = decodeURIComponent(match[2]);
+      const schema = (this.currentApiSpec.components?.schemas || ({} as Record<string, any>))[schemaName];
+      return schema ? JSON.parse(JSON.stringify(schema)) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Recursively dereference $ref and items.$ref within a schema using the loaded OpenAPI spec
+  private deepDerefSchema(schema: any, depth: number = 0): any {
+    if (!schema || typeof schema !== 'object' || depth > 10) return schema;
+
+    // If this node is a $ref, replace with the referenced schema and continue
+    if (schema.$ref && typeof schema.$ref === 'string') {
+      const resolved = this.resolveSchemaRef(schema.$ref);
+      if (resolved) {
+        return this.deepDerefSchema(resolved, depth + 1);
+      }
+      return schema; // fallback
+    }
+
+    const clone: any = Array.isArray(schema) ? [] : { ...schema };
+
+    // Handle array items
+    if (clone.type === 'array' && clone.items) {
+      clone.items = this.deepDerefSchema(clone.items, depth + 1);
+    }
+
+    // Handle object properties and additionalProperties
+    if (clone.type === 'object' && clone.properties && typeof clone.properties === 'object') {
+      const newProps: Record<string, any> = {};
+      for (const [k, v] of Object.entries(clone.properties)) {
+        newProps[k] = this.deepDerefSchema(v, depth + 1);
+      }
+      clone.properties = newProps;
+    }
+
+    if (clone.additionalProperties && typeof clone.additionalProperties === 'object') {
+      clone.additionalProperties = this.deepDerefSchema(clone.additionalProperties, depth + 1);
+    }
+
+    // Recurse other common containers
+    for (const key of ['allOf', 'anyOf', 'oneOf']) {
+      if (Array.isArray(clone[key])) {
+        clone[key] = clone[key].map((s: any) => this.deepDerefSchema(s, depth + 1));
+      }
+    }
+
+    return clone;
   }
 
   private buildIntelligentRequest(scenario: TestScenario, systemMap: SystemMap): any {
@@ -1324,9 +1698,11 @@ export class LangGraphTestingAgent {
     return insights;
   }
 
-  private evaluateTestSuccess(scenario: TestScenario, result: any, insights: string[]): boolean {
-    // Primary success criteria: status code match
-    const statusMatch = result.response?.status === scenario.expectedOutcome.statusCode;
+  private evaluateTestSuccess(scenario: TestScenario, result: any, insights: string[], systemMap: SystemMap): boolean {
+    // Primary success criteria: status code match (supports multiple allowed statuses)
+    const allowed = this.deriveAllowedStatuses(scenario, systemMap);
+    const allowedArray: number[] = Array.isArray(allowed) ? allowed : [allowed];
+    const statusMatch = allowedArray.includes(result.response?.status);
 
     console.log(`🎯 [TEST EVAL] Evaluating ${scenario.type} test "${scenario.description}"`);
     console.log(
