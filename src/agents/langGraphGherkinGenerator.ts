@@ -60,6 +60,22 @@ export class LangGraphGherkinGenerator {
       if (!endpoint) continue;
 
       const feature = await this.generateFeatureForEndpoint(endpoint, scenarios, state.systemMap);
+      // Inject auth/middleware Given steps if present in codeRefs
+      if (feature && state.systemMap.codeRefs) {
+        const refKey = `${endpoint.method} ${endpoint.path}`;
+        const ref = state.systemMap.codeRefs[refKey];
+        const backgroundSteps: GherkinStep[] = [];
+        if (state.systemMap.auth?.required && state.systemMap.auth.header === 'Authorization') {
+          backgroundSteps.push({ keyword: 'Given', text: 'a valid Authorization token is set' });
+        }
+        if (ref && ref.middlewares && ref.middlewares.length > 0) {
+          backgroundSteps.push({ keyword: 'And', text: 'middleware preconditions are satisfied' });
+        }
+        if (backgroundSteps.length > 0) {
+          feature.background = feature.background || { title: 'API preconditions', steps: [] };
+          feature.background.steps = [...(feature.background.steps || []), ...backgroundSteps];
+        }
+      }
       if (feature) {
         gherkinFeatures.push(feature);
       }

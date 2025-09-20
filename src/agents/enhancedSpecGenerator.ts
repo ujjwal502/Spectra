@@ -1,6 +1,8 @@
-import { ApiStructure, CodebaseAnalysisResult, SpecGeneratorOptions } from '../types';
+import { SpecGeneratorOptions } from '../types';
 import { AIService } from '../services/aiService';
 import { ChatOpenAI } from '@langchain/openai';
+import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
+import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 
@@ -110,6 +112,74 @@ export class EnhancedSpecGenerator {
     }
 
     return currentState;
+  }
+
+  /**
+   * Build a LangGraph state graph mirroring the sequential workflow
+   * Adds conditional branching to enhancement step and checkpointing support
+   */
+  private buildLangGraph() {
+    try {
+      // Define state schema for LangGraph
+      const SpecState = Annotation.Root({
+        rootDir: Annotation<string>(),
+        options: Annotation<any>(),
+        codebaseContext: Annotation<string>(),
+        repoStructure: Annotation<any>(),
+        packingMetadata: Annotation<any>(),
+        detectedLanguages: Annotation<string[]>(),
+        detectedFrameworks: Annotation<string[]>(),
+        businessDomain: Annotation<string>(),
+        discoveredEndpoints: Annotation<any[]>(),
+        apiPatterns: Annotation<any[]>(),
+        authenticationMethods: Annotation<string[]>(),
+        generatedSchema: Annotation<any>(),
+        validationResults: Annotation<any>(),
+        confidence: Annotation<number>(),
+        errors: Annotation<string[]>(),
+        warnings: Annotation<string[]>(),
+        currentStep: Annotation<string>(),
+        stepProgress: Annotation<number>(),
+        totalSteps: Annotation<number>(),
+      });
+
+      const graph = new StateGraph(SpecState)
+        .addNode('packRepo', async (s: SpecGenerationAgentState) => {
+          return await this.packRepositoryWithRepomix(s);
+        })
+        .addNode('analyze', async (s: SpecGenerationAgentState) => {
+          return await this.analyzeCodebaseStructure(s);
+        })
+        .addNode('discover', async (s: SpecGenerationAgentState) => {
+          return await this.discoverApiEndpoints(s);
+        })
+        .addNode('generate', async (s: SpecGenerationAgentState) => {
+          return await this.generateOpenApiSchema(s);
+        })
+        .addNode('validate', async (s: SpecGenerationAgentState) => {
+          return await this.validateGeneratedSchema(s);
+        })
+        .addNode('enhance', async (s: SpecGenerationAgentState) => {
+          return await this.enhanceSchemaWithAI(s);
+        })
+        .addEdge(START, 'packRepo')
+        .addEdge('packRepo', 'analyze')
+        .addEdge('analyze', 'discover')
+        .addEdge('discover', 'generate')
+        .addEdge('generate', 'validate')
+        .addConditionalEdges(
+          'validate',
+          (s: SpecGenerationAgentState) => (s.confidence && s.confidence >= 0.7 && (!s.errors || s.errors.length === 0) ? END : 'enhance'),
+          { enhance: 'enhance', [END]: END },
+        )
+        .addEdge('enhance', END)
+        .compile({ checkpointer: new MemorySaver() });
+
+      return graph;
+    } catch (e) {
+      console.log('⚠️ Failed to initialize LangGraph workflow, will fallback to sequential:', e);
+      return null;
+    }
   }
 
   /**
@@ -718,9 +788,7 @@ export class EnhancedSpecGenerator {
    * Public method to generate OpenAPI spec from codebase
    */
   async generateFromCode(rootDir: string): Promise<any> {
-    console.log(
-      '🚀 Starting Enhanced Spec Generation with LangGraph-inspired workflow + Repomix...',
-    );
+    console.log('🚀 Starting Enhanced Spec Generation (LangGraph workflow) + Repomix...');
 
     const initialState: SpecGenerationAgentState = {
       rootDir,
@@ -744,10 +812,38 @@ export class EnhancedSpecGenerator {
       totalSteps: 6,
     };
 
-    // Execute the workflow
+    // Try LangGraph first
+    const graph = this.buildLangGraph();
+    if (graph) {
+      try {
+        const runId = uuidv4();
+        const finalState = (await graph.invoke(initialState, {
+          configurable: { thread_id: runId },
+        })) as SpecGenerationAgentState;
+
+        console.log('\n🎯 Enhanced Spec Generation Complete (LangGraph)!');
+        console.log(`📊 Final confidence: ${Math.round((finalState.confidence || 0) * 100)}%`);
+        console.log(`🔍 Discovered endpoints: ${finalState.discoveredEndpoints?.length || 0}`);
+        console.log(`⚠️ Warnings: ${finalState.warnings?.length || 0}`);
+        console.log(`❌ Errors: ${finalState.errors?.length || 0}`);
+
+        if (finalState.errors?.length > 0) {
+          console.log('\nErrors encountered:');
+          finalState.errors.forEach((error) => console.log(`  - ${error}`));
+        }
+
+        console.log("returning here with langgraph");
+
+        return finalState.generatedSchema || {};
+      } catch (err) {
+        console.log('⚠️ LangGraph run failed, falling back to sequential workflow:', err);
+      }
+    }
+
+    // Fallback to existing sequential flow
+    console.log('↩️ Falling back to sequential workflow...');
     const finalState = await this.executeWorkflow(initialState);
 
-    // Log final results
     console.log('\n🎯 Enhanced Spec Generation Complete!');
     console.log(`📊 Final confidence: ${Math.round((finalState.confidence || 0) * 100)}%`);
     console.log(`🔍 Discovered endpoints: ${finalState.discoveredEndpoints?.length || 0}`);

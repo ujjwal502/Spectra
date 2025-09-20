@@ -48,14 +48,14 @@ export class ResponseValidator {
    * @param expectedStatus Expected status code
    * @returns Validation result
    */
-  validateStatusCode(actualStatus: number, expectedStatus: number): AssertionResult {
+  validateStatusCode(actualStatus: number, expectedStatus: number | number[]): AssertionResult {
+    const expectedArray = Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus];
+    const success = expectedArray.includes(actualStatus);
+
     return {
       name: 'Status code validation',
-      success: actualStatus === expectedStatus,
-      error:
-        actualStatus !== expectedStatus
-          ? `Expected status code ${expectedStatus}, got ${actualStatus}`
-          : undefined,
+      success,
+      error: success ? undefined : `Expected status code ${expectedArray.join(' or ')}, got ${actualStatus}`,
     };
   }
 
