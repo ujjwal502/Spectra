@@ -20,71 +20,62 @@ program
   .description('Show information about enhanced features')
   .action(() => {
     console.log(`
-🌟 Spectra Enhanced - AI-Powered API Testing with LangGraph + Repomix
+🌟 Spectra Enhanced - AI-Powered API Testing
 
-Enhanced Features:
+Enhanced Highlights:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🔍 Complete Codebase Analysis
-   • Repomix packs entire codebase for AI analysis
-   • Framework-agnostic endpoint discovery
-   • Business context understanding
-
-🧠 AI-Powered Multi-Agent Workflow
-   • Repository Analysis Agent
-   • API Discovery Agent  
-   • Schema Generation Agent
-   • Validation Agent
-   • Enhancement Agent
-
-🚀 LangGraph-Inspired Orchestration
-   • Sequential workflow with conditional branching
-   • Error handling and fallback mechanisms
-   • Confidence-based decision making
-
-📊 Comprehensive Analysis & Comparison
-   • Side-by-side comparison with traditional methods
-   • Detailed confidence metrics
-   • Performance analysis
-   • Business context insights
+🔍 Codebase-aware analysis via context
+🧠 AI-driven multi-phase testing workflow
+🚀 Orchestrated steps with retries and insights
 
 Available Commands:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  generate-spec-enhanced  Generate OpenAPI spec using AI + Repomix
-  compare-generation      Compare enhanced vs traditional methods
-  demo-enhanced           Run demo on built-in examples
-  batch-enhanced          Process multiple codebases
-  info                    Show this information
+  run-intelligent-testing <apiSpecPath>  Run intelligent testing on an OpenAPI spec
+  check-env                              Check environment configuration
+  info                                   Show this information
+
+Examples (Node):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Show info
+  npx ts-node src/cli/enhanced.ts info
+
+  # Check env
+  OPENAI_API_KEY=your_key npx ts-node src/cli/enhanced.ts check-env
+
+  # Run intelligent testing
+  OPENAI_API_KEY=your_key npx ts-node src/cli/enhanced.ts run-intelligent-testing ./path/to/openapi.json
+
+Examples (Docker):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  # Show info (default)
+  docker run --rm spectra-pilot:0.3.0
+
+  # Or explicitly
+  docker run --rm spectra-pilot:0.3.0 info
+
+  # Check env
+  docker run --rm -e OPENAI_API_KEY=your_key spectra-pilot:0.3.0 check-env
+
+  # Run testing with a mounted directory
+  docker run --rm -e OPENAI_API_KEY=your_key -v "$PWD:/work" \
+    spectra-pilot:0.3.0 run-intelligent-testing /work/path/to/openapi.json
 
 Prerequisites:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   ✅ OPENAI_API_KEY environment variable (required)
-  ✅ Repomix for codebase analysis (installed automatically)
-  ✅ LangGraph.js for workflow orchestration (installed automatically)
-
-Examples:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  # Generate enhanced OpenAPI spec
-  npx ts-node src/cli/enhanced.ts generate-spec-enhanced ./my-api-code
-
-  # Compare methods and generate analysis report  
-  npx ts-node src/cli/enhanced.ts generate-spec-enhanced ./my-api-code --compare
-
-  # Run comprehensive demo
-  npx ts-node src/cli/enhanced.ts demo-enhanced
-
-  # Compare methods side-by-side
-  npx ts-node src/cli/enhanced.ts compare-generation ./my-api-code
+  ✅ Node.js 16+ (if running outside Docker)
 
 Get Started:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   1. Set your OpenAI API key: export OPENAI_API_KEY=your_key_here
-  2. Try the demo: npx ts-node src/cli/enhanced.ts demo-enhanced  
-  3. Analyze your codebase: npx ts-node src/cli/enhanced.ts generate-spec-enhanced ./your-code
+  2. Show info: npx ts-node src/cli/enhanced.ts info
+  3. Run testing: npx ts-node src/cli/enhanced.ts run-intelligent-testing ./your_openapi.json
 
 For more help on specific commands, use: --help with any command
     `);
@@ -133,8 +124,8 @@ program
     console.log();
 
     if (allPassed) {
-      console.log('🎉 Environment is ready for enhanced Spectra features!');
-      console.log('Try: npx ts-node src/cli/enhanced.ts demo-enhanced');
+      console.log('🎉 Environment is ready for Spectra Enhanced!');
+      console.log('Try: npx ts-node src/cli/enhanced.ts run-intelligent-testing ./path/to/openapi.json');
     } else {
       console.log('❌ Please fix the above issues before using enhanced features.');
       process.exit(1);

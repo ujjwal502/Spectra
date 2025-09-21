@@ -4,6 +4,12 @@
   "description": "AI-powered API testing automation for demo-api",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "spectra-enhanced": "dist/src/cli/enhanced.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/index.ts",
@@ -12,7 +18,28 @@
     "generate:spec:demo-api": "ts-node src/index.ts generate-spec examples/demo-api ./examples/demo-api/enrichedOpenapi.json",
     "test:demo-api:intelligent": "ts-node src/cli/enhanced.ts run-intelligent-testing examples/demo-api/openapi.json",
     "test:demo-api:intelligent_2": "ts-node src/cli/enhanced.ts run-intelligent-testing examples/node-express-api/openapi.json",
-    "setup:git-hooks": "./setup-git-hooks.sh"
+    "setup:git-hooks": "./setup-git-hooks.sh",
+    
+    "cli:info": "ts-node src/cli/enhanced.ts info",
+    "cli:check-env": "ts-node src/cli/enhanced.ts check-env",
+    "cli:run:intel:default": "ts-node src/cli/enhanced.ts run-intelligent-testing ./examples/node-express-api/openapi.json",
+    "cli:run:intel:code-root": "ts-node src/cli/enhanced.ts run-intelligent-testing ./examples/node-express-api/openapi.json --code-root ./examples/node-express-api",
+    "cli:run:intel:depth": "ts-node src/cli/enhanced.ts run-intelligent-testing ./examples/node-express-api/openapi.json --context-depth 2000",
+    "cli:run:intel:self-heal": "ts-node src/cli/enhanced.ts run-intelligent-testing ./examples/node-express-api/openapi.json --self-heal --max-retries 2",
+    "cli:run:intel:all": "ts-node src/cli/enhanced.ts run-intelligent-testing ./examples/node-express-api/openapi.json --code-root ./examples/node-express-api --context-depth 2000 --self-heal --max-retries 2",
+    "cli:run:intel:custom": "ts-node src/cli/enhanced.ts run-intelligent-testing",
+
+    "docker:build": "docker build -t spectra-pilot:0.3.0 .",
+    "docker:run:info": "docker run --rm spectra-pilot:0.3.0 info",
+    "docker:run:check-env": "docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY spectra-pilot:0.3.0 check-env",
+    "docker:run:test": "docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY -v \"$PWD:/work\" spectra-pilot:0.3.0 run-intelligent-testing /work/examples/node-express-api/openapi.json",
+    "docker:run:intel:default": "docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY -v \"$PWD:/work\" spectra-pilot:0.3.0 run-intelligent-testing /work/examples/node-express-api/openapi.json",
+    "docker:run:intel:code-root": "docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY -v \"$PWD:/work\" spectra-pilot:0.3.0 run-intelligent-testing /work/examples/node-express-api/openapi.json --code-root /work/examples/node-express-api",
+    "docker:run:intel:depth": "docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY -v \"$PWD:/work\" spectra-pilot:0.3.0 run-intelligent-testing /work/examples/node-express-api/openapi.json --context-depth 2000",
+    "docker:run:intel:self-heal": "docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY -v \"$PWD:/work\" spectra-pilot:0.3.0 run-intelligent-testing /work/examples/node-express-api/openapi.json --self-heal --max-retries 2",
+    "docker:run:intel:all": "docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY -v \"$PWD:/work\" spectra-pilot:0.3.0 run-intelligent-testing /work/examples/node-express-api/openapi.json --code-root /work/examples/node-express-api --context-depth 2000 --self-heal --max-retries 2",
+    "docker:run:intel:custom": "docker run --rm -e OPENAI_API_KEY=$OPENAI_API_KEY -v \"$PWD:/work\" spectra-pilot:0.3.0 run-intelligent-testing",
+    "docker:save": "docker save spectra-pilot:0.3.0 | gzip > spectra-pilot_0.3.0.tar.gz"
   },
   "keywords": [
     "api",

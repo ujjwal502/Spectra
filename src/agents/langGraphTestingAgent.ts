@@ -24,6 +24,8 @@ import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/lang
 import { v4 as uuidv4 } from 'uuid';
 import { GherkinFeature } from '../types/langGraphTypes';
 import axios from 'axios';
+import { AIService } from '../services/aiService';
+import { validateOpenApiSpec } from '../utils/specValidator';
 
 export class LangGraphTestingAgent {
   private model: ChatOpenAI;
@@ -55,7 +57,7 @@ export class LangGraphTestingAgent {
     apiSpec: OpenAPIV3.Document,
     outputDir?: string,
   ): Promise<TestingState> {
-    console.log('🚀 [Spectra TESTING] Starting intelligent API testing workflow...');
+    console.log('🚀 [Spectra TESTING] Starting intelligent API testing workflow (LLM-driven)...');
 
     // Keep a reference to the API spec for schema resolution
     this.currentApiSpec = apiSpec;
@@ -75,35 +77,25 @@ export class LangGraphTestingAgent {
       await this.tryResetServerData(apiSpec);
     }
 
-    // Try LangGraph-driven workflow first
-    const graph = this.buildTestingGraph();
-    if (graph) {
+    // New LLM-driven LangGraph workflow
+    const llmGraph = this.buildLLMTestingGraph();
+    if (llmGraph) {
       try {
         const runId = uuidv4();
-        console.log("Langgraph state before invoke");
-        state = (await graph.invoke(state, { configurable: { thread_id: runId } })) as TestingState;
+        state = (await llmGraph.invoke(state, { configurable: { thread_id: runId } })) as TestingState;
       } catch (e) {
-        console.log('⚠️ [Spectra TESTING] LangGraph run failed, falling back to sequential flow:', e);
-        // Fallback to existing sequential layers
-        state = await this.understandingLayer(state);
-        state = await this.testingLayer(state);
-        state = await this.gherkinLayer(state);
-        state = await this.functionalTester(state);
-        state = await this.securityTester(state);
-        state = await this.boundaryTester(state);
-        state = await this.errorTester(state);
-        state = await this.analysisLayer(state);
+        console.log('⚠️ [Spectra TESTING] LLM workflow failed, running sequential fallback:', e);
+        state = await this.validateSpecNode(state);
+        state = await this.generateLLMStepsNode(state);
+        state = await this.executeLLMStepsNode(state);
+        state = await this.analyzeLLMResultsNode(state);
       }
     } else {
-      // If graph couldn't be built, proceed with existing sequential layers
-      state = await this.understandingLayer(state);
-      state = await this.testingLayer(state);
-      state = await this.gherkinLayer(state);
-      state = await this.functionalTester(state);
-      state = await this.securityTester(state);
-      state = await this.boundaryTester(state);
-      state = await this.errorTester(state);
-      state = await this.analysisLayer(state);
+      // Fallback to minimal sequential LLM flow
+      state = await this.validateSpecNode(state);
+      state = await this.generateLLMStepsNode(state);
+      state = await this.executeLLMStepsNode(state);
+      state = await this.analyzeLLMResultsNode(state);
     }
 
     // Generate and save reports
@@ -123,14 +115,9 @@ export class LangGraphTestingAgent {
 
     console.log('🎉 [Spectra TESTING] Intelligent testing workflow completed!');
     console.log('📊 [FINAL SUMMARY] Workflow Results:');
-    console.log(
-      `   🔍 System Analysis: ${state.systemMap?.endpoints.length || 0} endpoints mapped`,
-    );
     console.log(`   🧪 Test Scenarios: ${state.testScenarios.length} generated`);
-    console.log(`   🥒 Gherkin Features: ${state.gherkinFeatures.length} created`);
     console.log(`   ✅ Test Results: ${state.testResults.length} executed`);
     console.log(`   📈 Success Rate: ${state.analysis?.overallSuccessRate || 0}%`);
-    console.log(`   💡 Recommendations: ${state.recommendations.length} provided`);
 
     return state;
   }
@@ -155,18 +142,17 @@ export class LangGraphTestingAgent {
     }
   }
 
+  // removed legacy buildTestingGraph
+
   /**
-   * Build LangGraph state graph for testing workflow
+   * New minimal LLM-driven graph: validate -> generate -> execute -> analyze
    */
-  private buildTestingGraph() {
+  private buildLLMTestingGraph() {
     try {
       const TestState = Annotation.Root({
         apiSpec: Annotation<OpenAPIV3.Document>(),
-        systemMap: Annotation<SystemMap | undefined>(),
         testScenarios: Annotation<TestScenario[]>(),
         testResults: Annotation<TestResult[]>(),
-        gherkinFeatures: Annotation<GherkinFeature[]>(),
-        gherkinSummary: Annotation<any>(),
         analysis: Annotation<TestAnalysis | undefined>(),
         recommendations: Annotation<string[]>(),
         currentPhase: Annotation<'understanding' | 'testing' | 'gherkin' | 'execution' | 'analysis' | 'complete'>(),
@@ -174,331 +160,159 @@ export class LangGraphTestingAgent {
       });
 
       const graph = new StateGraph(TestState)
-        .addNode('understanding', async (s: TestingState) => {
-          return await this.understandingLayer(s);
-        })
-        .addNode('testing', async (s: TestingState) => {
-          return await this.testingLayer(s);
-        })
-        .addNode('gherkin', async (s: TestingState) => {
-          return await this.gherkinLayer(s);
-        })
-        .addNode('execute_functional', async (s: TestingState) => {
-          return await this.functionalTester(s);
-        })
-        .addNode('execute_security', async (s: TestingState) => {
-          return await this.securityTester(s);
-        })
-        .addNode('execute_boundary', async (s: TestingState) => {
-          return await this.boundaryTester(s);
-        })
-        .addNode('execute_error', async (s: TestingState) => {
-          return await this.errorTester(s);
-        })
-        .addNode('analyze', async (s: TestingState) => {
-          return await this.analysisLayer(s);
-        })
-        .addEdge(START, 'understanding')
-        .addEdge('understanding', 'testing')
-        .addEdge('testing', 'gherkin')
-        .addEdge('gherkin', 'execute_functional')
-        .addEdge('execute_functional', 'execute_security')
-        .addEdge('execute_security', 'execute_boundary')
-        .addEdge('execute_boundary', 'execute_error')
-        .addEdge('execute_error', 'analyze')
+        .addNode('validate', async (s: TestingState) => this.validateSpecNode(s))
+        .addNode('generate', async (s: TestingState) => this.generateLLMStepsNode(s))
+        .addNode('execute', async (s: TestingState) => this.executeLLMStepsNode(s))
+        .addNode('analyze', async (s: TestingState) => this.analyzeLLMResultsNode(s))
+        .addEdge(START, 'validate')
+        .addEdge('validate', 'generate')
+        .addEdge('generate', 'execute')
+        .addEdge('execute', 'analyze')
         .addEdge('analyze', END)
         .compile({ checkpointer: new MemorySaver() });
 
       return graph;
     } catch (e) {
-      console.log('⚠️ [Spectra TESTING] Failed to initialize LangGraph testing workflow:', e);
+      console.log('⚠️ [Spectra TESTING] Failed to initialize LLM testing workflow:', e);
       return null;
     }
   }
 
-  /**
-   * UNDERSTANDING LAYER
-   * Maps the API system, understands schemas, data flows, and dependencies
-   */
-  private async understandingLayer(state: TestingState): Promise<TestingState> {
-    console.log('🔍 [UNDERSTANDING LAYER] Analyzing API system...');
-
-    const systemMap = await this.analyzeApiSystem(state.apiSpec);
-
-    // Optional: attach code context
-    let codeAvailable = false;
-    try {
-      if (this.codeRoot) {
-        console.log(`🔎 [CODE CONTEXT] Building code index from: ${this.codeRoot}`);
-        const index = await buildCodeIndex(this.codeRoot);
-        const auth = getAuthContext(index) || undefined;
-        const codeRefs: Record<string, { implSnippets: string[]; middlewares: string[] }> = {};
-        for (const ep of systemMap.endpoints) {
-          const ctx = getEndpointContext(index, ep.method, ep.path);
-          codeRefs[`${ep.method} ${ep.path}`] = {
-            implSnippets: ctx.implSnippets.slice(0, 3),
-            middlewares: ctx.middlewares.slice(0, 3),
-          };
-          ep.metadata = { ...(ep.metadata || {}), code: { hasImpl: ctx.implSnippets.length > 0 } };
-        }
-        systemMap.codeRefs = codeRefs;
-        if (auth) systemMap.auth = { required: true, ...auth };
-        codeAvailable = true;
-      }
-    } catch (e) {
-      console.log('⚠️ [CODE CONTEXT] Failed to build/attach code context:', e);
+  // ===== LLM-driven nodes =====
+  private async validateSpecNode(state: TestingState): Promise<TestingState> {
+    console.log('🔎 [LLM] Validating OpenAPI specification...');
+    const validation = await validateOpenApiSpec(state.apiSpec);
+    if (!validation.valid) {
+      const errs = (validation.errors || []).join('; ');
+      throw new Error(`OpenAPI validation failed: ${errs}`);
     }
-
-    console.log(`🔍 [UNDERSTANDING LAYER] Found ${systemMap.endpoints.length} endpoints`);
-    console.log(`🔍 [UNDERSTANDING LAYER] Identified ${systemMap.schemas.length} schemas`);
-    console.log(`🔍 [UNDERSTANDING LAYER] Mapped ${systemMap.dataFlow.length} data flows`);
-
     return {
       ...state,
-      systemMap,
-      codeContext: { codeRoot: this.codeRoot, available: codeAvailable },
       currentPhase: 'testing',
-      messages: [
-        ...state.messages,
-        `Understanding layer complete. Analyzed ${systemMap.endpoints.length} endpoints with full schema mapping.`,
-      ],
+      messages: [...state.messages, 'OpenAPI spec validated'],
     };
   }
 
-  /**
-   * TESTING LAYER COORDINATOR
-   * Coordinates different specialized testing agents
-   */
-  private async testingLayer(state: TestingState): Promise<TestingState> {
-    console.log('🤖 [TESTING LAYER] Initializing specialized testing agents...');
+  private async generateLLMStepsNode(state: TestingState): Promise<TestingState> {
+    console.log('🧠 [LLM] Generating executable steps from spec...');
+    const ai = new AIService();
+    const steps = await ai.generateCurlPlanFromSpec(state.apiSpec, 10);
 
-    const testScenarios: TestScenario[] = [];
+    const scenarios: TestScenario[] = steps.map((step: any, idx: number) => ({
+      id: String(step.id || `llm_${idx + 1}`),
+      type: 'functional',
+      endpoint: String(step.path || '/'),
+      method: String(step.method || 'GET').toUpperCase(),
+      description: `LLM step ${idx + 1}: ${String(step.method || 'GET').toUpperCase()} ${String(step.path || '/')}`,
+      intent: 'LLM-generated functional test',
+      testData: {
+        ...(step.pathParams || {}),
+        ...(step.query || {}),
+        ...(step.body || {}),
+      },
+      expectedOutcome: { statusCode: Array.isArray(step.expect?.status) ? step.expect.status[0] : step.expect?.status ?? 200 },
+      dependencies: [],
+    }));
 
-    // Generate scenarios for each endpoint
-    if (state.systemMap) {
-      for (const endpoint of state.systemMap.endpoints) {
-        const scenarios = await this.generateTestScenariosForEndpoint(endpoint, state.systemMap);
-        testScenarios.push(...scenarios);
-      }
-    }
-
-    console.log(`🤖 [TESTING LAYER] Generated ${testScenarios.length} test scenarios`);
-
+    console.log(`🧠 [LLM] Generated ${scenarios.length} scenarios`);
     return {
       ...state,
-      testScenarios,
-      testResults: [],
-      currentPhase: 'gherkin',
-      messages: [
-        ...state.messages,
-        `Testing layer initialized with ${testScenarios.length} intelligent test scenarios.`,
-      ],
-    };
-  }
-
-  /**
-   * GHERKIN GENERATION LAYER (NEW)
-   * Converts test scenarios into business-readable Gherkin features
-   */
-  private async gherkinLayer(state: TestingState): Promise<TestingState> {
-    console.log('🥒 [GHERKIN LAYER] Converting test scenarios to Gherkin features...');
-
-    // Use the dedicated Gherkin generator
-    const updatedState = await this.gherkinGenerator.generateGherkinFeatures(state);
-
-    console.log(
-      `🥒 [GHERKIN LAYER] Generated ${updatedState.gherkinFeatures.length} Gherkin features`,
-    );
-
-    return {
-      ...updatedState,
+      testScenarios: scenarios,
       currentPhase: 'execution',
-      messages: [
-        ...updatedState.messages,
-        `Gherkin layer complete. Generated ${updatedState.gherkinFeatures.length} business-readable features.`,
-      ],
+      messages: [...state.messages, `Generated ${scenarios.length} LLM scenarios`],
     };
   }
 
-  /**
-   * FUNCTIONAL TESTER - Tests core functionality
-   */
-  private async functionalTester(state: TestingState): Promise<TestingState> {
-    console.log('✅ [FUNCTIONAL TESTER] Testing core functionality...');
+  private async executeLLMStepsNode(state: TestingState): Promise<TestingState> {
+    console.log('🔥 [LLM] Executing scenarios...');
+    const { CurlRunner } = await import('../runners/curlRunner');
+    const runner = new CurlRunner();
+    const baseUrl = process.env.SPECTRA_BASE_URL || this.extractBaseUrlFromApiSpec(state.apiSpec);
+    runner.setBaseUrl(baseUrl);
 
-    const functionalScenarios = state.testScenarios.filter((s) => s.type === 'functional');
     const results: TestResult[] = [];
-
-    // Prefetch existing IDs for resources with {id} to reduce 404s
-    let existingIds: Array<string | number> = [];
-    try {
-      const baseUrl = this.extractBaseUrlFromSystemMap(state.systemMap!);
-      existingIds = await this.fetchExistingResourceIds(state.systemMap!, baseUrl);
-      console.log(`📚 [FUNCTIONAL TESTER] Prefetched existing IDs:`, existingIds);
-    } catch (e) {
-      console.log('⚠️ [FUNCTIONAL TESTER] Failed to prefetch existing IDs:', e);
-    }
-
-    // Simple chaining: create → read → update → delete using a shared created ID
-    let createdId: string | number | undefined;
-
-    // Stable order to promote chaining: POST -> GET {id} -> PUT -> DELETE -> GET list
-    const ordered = functionalScenarios.sort((a, b) => {
-      const rank = (s: TestScenario) =>
-        s.method === 'POST' ? 0 : s.method === 'GET' && s.endpoint.includes('{id}') ? 1 : s.method === 'PUT' ? 2 : s.method === 'DELETE' ? 3 : 4;
-      return rank(a) - rank(b);
-    });
-
-    for (const scenario of ordered) {
-      // Inject a valid existing ID for successful functional flows with {id}
-      if (
-        scenario.endpoint.includes('{id}') &&
-        (scenario.expectedOutcome?.statusCode === 200 || scenario.expectedOutcome?.statusCode === 204)
-      ) {
-        if (!scenario.testData || typeof scenario.testData !== 'object') (scenario as any).testData = {};
-        if (createdId !== undefined) {
-          (scenario as any).testData.id = createdId;
-          console.log(`🔗 [FUNCTIONAL CHAIN] Using created id=${createdId} for scenario ${scenario.id}`);
-        } else if (!('id' in scenario.testData) && existingIds.length > 0) {
-          (scenario as any).testData.id = existingIds[0];
-          console.log(`🔧 [FUNCTIONAL TESTER] Injected existing id=${existingIds[0]} into scenario ${scenario.id}`);
+    for (const scenario of state.testScenarios) {
+      const start = Date.now();
+      try {
+        let endpoint = scenario.endpoint;
+        const request: any = {};
+        const pathParams: Record<string, any> = {};
+        Object.entries(scenario.testData || {}).forEach(([k, v]) => {
+          if (endpoint.includes(`{${k}}`)) pathParams[k] = v;
+          else request[k] = v as any;
+        });
+        for (const [k, v] of Object.entries(pathParams)) {
+          endpoint = endpoint.replace(`{${k}}`, String(v));
         }
+
+        const testCase: any = {
+          id: scenario.id,
+          endpoint,
+          method: scenario.method,
+          request,
+          headers: {},
+          expectedResponse: { status: scenario.expectedOutcome.statusCode },
+          files: [],
+        };
+
+        const execResult = await runner.executeTest(testCase);
+        results.push({
+          scenarioId: scenario.id,
+          success: execResult.success,
+          actualStatusCode: execResult.response?.status || 0,
+          expectedStatusCode: scenario.expectedOutcome.statusCode,
+          response: execResult.response,
+          duration: execResult.duration,
+          errors: execResult.error ? [execResult.error] : [],
+          insights: [],
+        });
+      } catch (e: any) {
+        const duration = Date.now() - start;
+        results.push({
+          scenarioId: scenario.id,
+          success: false,
+          actualStatusCode: 0,
+          expectedStatusCode: scenario.expectedOutcome.statusCode,
+          response: null,
+          duration,
+          errors: [e?.message || 'Execution error'],
+          insights: [],
+        });
       }
-
-      const result = await this.executeTestScenario(scenario, state.systemMap!);
-      results.push(result);
-      console.log(
-        `✅ [FUNCTIONAL TESTER] ${scenario.description}: ${result.success ? 'PASS' : 'FAIL'}`,
-      );
-
-      // Capture ID after successful create
-      const isCreate = scenario.method === 'POST' && /(users|items|records|entities)/i.test(scenario.endpoint);
-      if (isCreate && result.success) {
-        const body = result.response?.body;
-        const newId = body?.id ?? body?.ID ?? body?._id;
-        if (newId !== undefined) {
-          createdId = newId;
-          console.log(`🆔 [FUNCTIONAL CHAIN] Captured created id=${createdId}`);
-        }
-      }
     }
 
+    console.log(`🔥 [LLM] Executed ${results.length} scenarios`);
     return {
       ...state,
-      testResults: [...state.testResults, ...results],
+      testResults: results,
+      currentPhase: 'analysis',
+      messages: [...state.messages, `Executed ${results.length} scenarios`],
     };
   }
 
-  // Attempt to fetch existing resource IDs from a collection endpoint (e.g., GET /users)
-  private async fetchExistingResourceIds(systemMap: SystemMap, baseUrl: string): Promise<Array<string | number>> {
-    try {
-      const listEndpoint = systemMap.endpoints.find(
-        (e) => e.method === 'GET' && !e.path.includes('{') && /users|items|records|entities/i.test(e.path),
-      );
-      if (!listEndpoint) return [];
-      const url = `${baseUrl}${listEndpoint.path.startsWith('/') ? '' : '/'}${listEndpoint.path}`;
-      const resp = await axios.get(url, { timeout: 5000 });
-      const data = resp.data;
-      if (Array.isArray(data)) {
-        return data.map((d) => (typeof d === 'object' && d ? (d.id ?? d.ID ?? d._id) : undefined)).filter((v) => v !== undefined);
-      }
-      return [];
-    } catch (e) {
-      return [];
-    }
-  }
+  private async analyzeLLMResultsNode(state: TestingState): Promise<TestingState> {
+    console.log('📊 [LLM] Analyzing results...');
+    const total = state.testResults.length;
+    const passed = state.testResults.filter((r) => r.success).length;
+    const overallSuccessRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
-  /**
-   * SECURITY TESTER - Tests security vulnerabilities
-   */
-  private async securityTester(state: TestingState): Promise<TestingState> {
-    console.log('🔒 [SECURITY TESTER] Testing security vulnerabilities...');
-
-    const securityScenarios = state.testScenarios.filter((s) => s.type === 'security');
-    const results: TestResult[] = [];
-
-    for (const scenario of securityScenarios) {
-      const result = await this.executeTestScenario(scenario, state.systemMap!);
-      results.push(result);
-      console.log(
-        `🔒 [SECURITY TESTER] ${scenario.description}: ${result.success ? 'PASS' : 'FAIL'}`,
-      );
-    }
-
-    return {
-      ...state,
-      testResults: [...state.testResults, ...results],
+    const analysis: TestAnalysis = {
+      overallSuccessRate,
+      phaseResults: { functional: overallSuccessRate },
+      criticalIssues: [],
+      patterns: [],
+      riskAssessment: { level: overallSuccessRate >= 80 ? 'low' : overallSuccessRate >= 50 ? 'medium' : 'high', factors: [], mitigations: [] },
     };
-  }
-
-  /**
-   * BOUNDARY TESTER - Tests edge cases and boundaries
-   */
-  private async boundaryTester(state: TestingState): Promise<TestingState> {
-    console.log('⚡ [BOUNDARY TESTER] Testing edge cases and boundaries...');
-
-    const boundaryScenarios = state.testScenarios.filter((s) => s.type === 'boundary');
-    const results: TestResult[] = [];
-
-    for (const scenario of boundaryScenarios) {
-      const result = await this.executeTestScenario(scenario, state.systemMap!);
-      results.push(result);
-      console.log(
-        `⚡ [BOUNDARY TESTER] ${scenario.description}: ${result.success ? 'PASS' : 'FAIL'}`,
-      );
-    }
-
-    return {
-      ...state,
-      testResults: [...state.testResults, ...results],
-    };
-  }
-
-  /**
-   * ERROR TESTER - Tests error handling
-   */
-  private async errorTester(state: TestingState): Promise<TestingState> {
-    console.log('❌ [ERROR TESTER] Testing error handling...');
-
-    const errorScenarios = state.testScenarios.filter((s) => s.type === 'error');
-    const results: TestResult[] = [];
-
-    for (const scenario of errorScenarios) {
-      const result = await this.executeTestScenario(scenario, state.systemMap!);
-      results.push(result);
-      console.log(`❌ [ERROR TESTER] ${scenario.description}: ${result.success ? 'PASS' : 'FAIL'}`);
-    }
-
-    return {
-      ...state,
-      testResults: [...state.testResults, ...results],
-    };
-  }
-
-  /**
-   * ANALYSIS LAYER
-   * Analyzes all test results and provides recommendations
-   */
-  private async analysisLayer(state: TestingState): Promise<TestingState> {
-    console.log('📊 [ANALYSIS LAYER] Analyzing test results...');
-
-    const analysis = await this.analyzeTestResults(state.testResults, state.systemMap!);
-    const recommendations = await this.generateRecommendations(analysis, state.systemMap!);
-
-    console.log(`📊 [ANALYSIS LAYER] Overall success rate: ${analysis.overallSuccessRate}%`);
-    console.log(`📊 [ANALYSIS LAYER] Critical issues found: ${analysis.criticalIssues.length}`);
 
     return {
       ...state,
       analysis,
-      recommendations,
+      recommendations: [],
       currentPhase: 'complete',
-      messages: [
-        ...state.messages,
-        `Analysis complete. Success rate: ${analysis.overallSuccessRate}%. Generated ${recommendations.length} recommendations.`,
-      ],
+      messages: [...state.messages, `Analysis complete. Success rate: ${overallSuccessRate}%`],
     };
   }
+
 
   /**
    * Extract base URL from OpenAPI spec servers section
@@ -536,6 +350,7 @@ export class LangGraphTestingAgent {
   }
 
   // Helper methods (to be implemented in next steps)
+  /* removed: legacy analyzeApiSystem */
   private async analyzeApiSystem(apiSpec: OpenAPIV3.Document): Promise<SystemMap> {
     console.log('🔍 [AI ANALYSIS] Using AI to analyze API system architecture...');
 
@@ -590,6 +405,7 @@ export class LangGraphTestingAgent {
     };
   }
 
+  /* removed: legacy analyzeEndpoint */
   private async analyzeEndpoint(
     pathTemplate: string,
     method: string,
@@ -646,6 +462,7 @@ export class LangGraphTestingAgent {
     };
   }
 
+  /* removed: legacy analyzeParameter */
   private async analyzeParameter(param: any, pathTemplate: string): Promise<ParameterInfo> {
     // AI-enhanced parameter analysis
     const validValues = await this.generateValidParameterValues(param, pathTemplate);
@@ -659,6 +476,7 @@ export class LangGraphTestingAgent {
     };
   }
 
+  /* removed: legacy analyzeSchema */
   private async analyzeSchema(
     schemaName: string,
     schema: any,
@@ -682,6 +500,7 @@ export class LangGraphTestingAgent {
     };
   }
 
+  /* removed: legacy analyzeDataFlowWithAI */
   private async analyzeDataFlowWithAI(
     endpoints: EndpointInfo[],
     schemas: SchemaInfo[],
@@ -724,6 +543,7 @@ export class LangGraphTestingAgent {
     }
   }
 
+  /* removed: legacy findRelatedEndpoints */
   private async findRelatedEndpoints(
     pathTemplate: string,
     method: string,
@@ -755,6 +575,7 @@ export class LangGraphTestingAgent {
     return related;
   }
 
+  /* removed: legacy generateValidParameterValues */
   private async generateValidParameterValues(param: any, pathTemplate: string): Promise<any[]> {
     // AI-powered parameter value generation based on context
     if (param.name === 'id' && pathTemplate.includes('/users/')) {
@@ -772,6 +593,7 @@ export class LangGraphTestingAgent {
     return [];
   }
 
+  /* removed: legacy generateSchemaExamples */
   private async generateSchemaExamples(schemaName: string, schema: any): Promise<any[]> {
     const examples: any[] = [];
 
@@ -796,6 +618,7 @@ export class LangGraphTestingAgent {
     return examples;
   }
 
+  /* removed: legacy parseAIResponse */
   private parseAIResponse(content: string): any {
     try {
       // Extract JSON from AI response
@@ -810,6 +633,7 @@ export class LangGraphTestingAgent {
     return { dataFlow: [], dependencies: [] };
   }
 
+  /* removed: legacy fallbackFlowAnalysis */
   private fallbackFlowAnalysis(endpoints: EndpointInfo[]): {
     dataFlow: DataFlowInfo[];
     dependencies: DependencyInfo[];
@@ -1303,8 +1127,23 @@ export class LangGraphTestingAgent {
     );
 
     try {
-      // Use the enhanced test data manager for consistent, reliable test data
-      const testData = await this.testDataManager.generateTestData(endpoint, dataType, systemMap);
+      // Derive lightweight validation hints from code context if available
+      let validation: any = undefined;
+      try {
+        if (this.codeRoot) {
+          const cached = (this as any)._codeIndex;
+          const index = cached || await buildCodeIndex(this.codeRoot);
+          if (!cached) (this as any)._codeIndex = index;
+          // Attempt to use requestBody name as a hint source when present
+          const dtoName = (endpoint.requestBody as any)?.name;
+          validation = getValidationContext(index, dtoName);
+        }
+      } catch (e) {
+        console.log('⚠️ [TEST DATA] Failed to derive validation context, proceeding without it');
+      }
+
+      // Use the enhanced, schema-driven test data manager
+      const testData = await this.testDataManager.generateTestData(endpoint, dataType, systemMap, validation);
       console.log(`📊 [TEST DATA] Generated data from manager:`, testData);
       return testData;
     } catch (error) {
@@ -1372,7 +1211,8 @@ export class LangGraphTestingAgent {
       const intelligentTestCase = this.createIntelligentTestCase(scenario, systemMap);
 
       // Dynamically extract base URL from system map
-      const baseUrl = this.extractBaseUrlFromSystemMap(systemMap);
+    // Allow overrides via env and CLI flag (SPECTRA_BASE_URL is set by CLI when --base-url is passed)
+    const baseUrl = process.env.SPECTRA_BASE_URL || this.extractBaseUrlFromSystemMap(systemMap);
       console.log(`🌐 [SMART EXECUTION] Using dynamic base URL: ${baseUrl}`);
       curlRunner.setBaseUrl(baseUrl);
       let result = await curlRunner.executeTest(intelligentTestCase);

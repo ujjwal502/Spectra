@@ -299,10 +299,19 @@ export class CurlRunner {
         }
       } else {
         console.log(
-          '🔧 [CURL-RUNNER] Non-GET request - Adding request body:',
+          '🔧 [CURL-RUNNER] Non-GET request - Preparing request body:',
           JSON.stringify(request, null, 2),
         );
-        command += ` -d '${JSON.stringify(request)}'`;
+        // Exclude path parameters from JSON body to respect OpenAPI schemas
+        const usedPathParams: Set<string> = (this as any)._usedPathParams || new Set();
+        const bodyOnly = request && typeof request === 'object'
+          ? Object.fromEntries(Object.entries(request).filter(([k]) => !usedPathParams.has(k)))
+          : request;
+        console.log(
+          '🔧 [CURL-RUNNER] Non-GET request - Final JSON body:',
+          JSON.stringify(bodyOnly, null, 2),
+        );
+        command += ` -d '${JSON.stringify(bodyOnly)}'`;
       }
     }
 

@@ -8,7 +8,7 @@ import { faker } from '@faker-js/faker';
  */
 export class LangGraphTestDataManager {
   private testUsers: any[] = [];
-  private validDepartments: string[] = ['Engineering', 'Marketing', 'Sales', 'HR'];
+  // Back-end agnostic: avoid domain-specific constants like departments
 
   constructor() {
     faker.seed(12345);
@@ -20,28 +20,11 @@ export class LangGraphTestDataManager {
    * Using Faker with a fixed seed for reproducible data
    */
   private initializeTestData(): void {
+    // Keep a small deterministic set of IDs to prefer existing references when helpful
     this.testUsers = [
-      {
-        id: 1,
-        name: faker.person.fullName(),
-        email: faker.internet.email().toLowerCase(),
-        age: faker.number.int({ min: 25, max: 35 }),
-        department: 'Engineering',
-      },
-      {
-        id: 2,
-        name: faker.person.fullName(),
-        email: faker.internet.email().toLowerCase(),
-        age: faker.number.int({ min: 28, max: 40 }),
-        department: 'Marketing',
-      },
-      {
-        id: 3,
-        name: faker.person.fullName(),
-        email: faker.internet.email().toLowerCase(),
-        age: faker.number.int({ min: 26, max: 38 }),
-        department: 'Sales',
-      },
+      { id: 1 },
+      { id: 2 },
+      { id: 3 },
     ];
   }
 
@@ -88,12 +71,9 @@ export class LangGraphTestDataManager {
   private generateParameterValue(param: any, dataType: string): any {
     switch (dataType) {
       case 'valid':
+        // Prefer seeded existing ids for path params named id
         if (param.name === 'id') {
-          // Use seeded faker for deterministic selection across runs
           return (this.fakerArrayElement(this.testUsers) as any).id;
-        }
-        if (param.name === 'department') {
-          return this.fakerArrayElement(this.validDepartments);
         }
         if (param.validValues && param.validValues.length > 0) {
           return param.validValues[0];
@@ -101,13 +81,15 @@ export class LangGraphTestDataManager {
         return this.getDefaultValidValue(param);
 
       case 'not_found':
-        if (param.name === 'id') {
-          return 999;
+        // Use out-of-range numeric or sentinel string to encourage 404s where applicable
+        if (param.type === 'integer' || param.type === 'number' || param.name === 'id') {
+          return 999999;
         }
-        if (param.name === 'department') {
-          return 'NonExistentDepartment';
+        if (param.validValues && param.validValues.length > 0) {
+          // pick a value outside enum if possible
+          return '__nonexistent__';
         }
-        return 'non_existent_value';
+        return '__nonexistent__';
 
       case 'invalid_format':
         if (param.name === 'id') {
@@ -122,7 +104,7 @@ export class LangGraphTestDataManager {
         return this.getDefaultValidValue(param);
 
       default:
-        // Prefer existing IDs to avoid 404 on update/delete unless explicitly testing not_found
+        // Prefer existing IDs if requested
         if (param.name === 'id') {
           return (this.fakerArrayElement(this.testUsers) as any).id;
         }
@@ -143,61 +125,10 @@ export class LangGraphTestDataManager {
    * Generate request body data with proper validation compliance
    */
   private generateRequestBodyData(requestBody: any, dataType: string, validation?: ValidationContext): any {
-    const data: any = {};
-
-    switch (dataType) {
-      case 'valid':
-        return this.applyValidationHints(this.generateValidUserData(), validation);
-
-      case 'invalid':
-        return this.applyValidationHints({
-          name: '',
-          email: faker.lorem.word(),
-          age: faker.number.int({ min: 10, max: 17 }),
-          department: faker.company.buzzNoun(),
-        }, validation);
-
-      case 'max_length':
-        return this.applyValidationHints({
-          name: faker.lorem.words(10).substring(0, 50),
-          email: `${faker.lorem.words(5).replace(/\s/g, '')}.${faker.lorem.words(3).replace(/\s/g, '')}@example.com`,
-          age: 100,
-          department: faker.helpers.arrayElement(this.validDepartments),
-        }, validation);
-
-      case 'min_length':
-        return this.applyValidationHints({
-          name: faker.person.firstName().substring(0, 2),
-          email: `${faker.string.alpha(1)}@${faker.string.alpha(1)}.co`,
-          age: 18,
-          department: faker.helpers.arrayElement(this.validDepartments),
-        }, validation);
-
-      case 'missing_required':
-        return this.applyValidationHints({
-          age: faker.number.int({ min: 18, max: 65 }),
-          department: faker.helpers.arrayElement(this.validDepartments),
-        }, validation);
-
-      case 'duplicate_email':
-        return this.applyValidationHints({
-          name: faker.person.fullName(),
-          email: this.testUsers[0].email,
-          age: faker.number.int({ min: 18, max: 65 }),
-          department: faker.helpers.arrayElement(this.validDepartments),
-        }, validation);
-
-      case 'invalid_department':
-        return this.applyValidationHints({
-          name: faker.person.fullName(),
-          email: faker.internet.email().toLowerCase(),
-          age: faker.number.int({ min: 18, max: 65 }),
-          department: faker.company.buzzNoun(),
-        }, validation);
-
-      default:
-        return this.applyValidationHints(this.generateValidUserData(), validation);
-    }
+    // requestBody here is a simplified SchemaInfo shape: { type, properties, required, examples }
+    const schema = requestBody;
+    const generated = this.generateFromSchema(schema, dataType);
+    return this.applyValidationHints(generated, validation);
   }
 
   private applyValidationHints(base: any, validation?: ValidationContext): any {
@@ -229,13 +160,121 @@ export class LangGraphTestDataManager {
   /**
    * Generate valid user data for successful test scenarios using Faker
    */
-  private generateValidUserData(): any {
-    return {
-      name: faker.person.fullName(),
-      email: faker.internet.email().toLowerCase(),
-      age: faker.number.int({ min: 18, max: 65 }),
-      department: faker.helpers.arrayElement(this.validDepartments),
-    };
+  private generateFromSchema(schema: any, dataType: string): any {
+    if (!schema) return {};
+
+    // Prefer example if present and valid for 'valid'
+    if (dataType === 'valid' && Array.isArray(schema.examples) && schema.examples.length > 0) {
+      return JSON.parse(JSON.stringify(schema.examples[0]));
+    }
+
+    if (schema.type === 'object' || schema.properties) {
+      const obj: any = {};
+      const requiredSet = new Set<string>((schema.required || []) as string[]);
+
+      for (const [key, propSchema] of Object.entries(schema.properties || {})) {
+        // For missing_required, skip required fields opportunistically
+        if (dataType === 'missing_required' && requiredSet.has(key)) {
+          continue;
+        }
+        obj[key] = this.generateValueForSchema(propSchema, dataType);
+      }
+
+      return obj;
+    }
+
+    // Fallback for non-object bodies
+    return this.generateValueForSchema(schema, dataType);
+  }
+
+  private generateValueForSchema(propSchema: any, dataType: string): any {
+    if (!propSchema || typeof propSchema !== 'object') return faker.lorem.word();
+
+    const type = propSchema.type || (propSchema.enum ? 'string' : 'string');
+    const format = propSchema.format;
+
+    switch (dataType) {
+      case 'invalid_format':
+        if (format === 'email') return 'invalid@format!';
+        if (type === 'integer' || type === 'number') return 'NaN';
+        break;
+      case 'max_length':
+        if (type === 'string') {
+          const len = (propSchema.maxLength || 256) + 10;
+          return faker.string.alpha(len);
+        }
+        break;
+      case 'min_length':
+        if (type === 'string') {
+          const min = propSchema.minLength || 2;
+          return faker.string.alpha(Math.max(1, min - 1));
+        }
+        break;
+      case 'numeric_boundary':
+        if (type === 'integer' || type === 'number') {
+          if (typeof propSchema.minimum === 'number') return propSchema.minimum - 1;
+          if (typeof propSchema.maximum === 'number') return (propSchema.maximum as number) + 1;
+          return this.fakerBoolean() ? -1 : 999999;
+        }
+        break;
+      case 'invalid':
+        // Produce type-violating values
+        if (type === 'integer' || type === 'number') return 'invalid_number';
+        if (type === 'string' && format === 'email') return 'not-an-email';
+        if (type === 'boolean') return 'not-a-boolean';
+        break;
+      case 'duplicate_email':
+        // Generic fallback: just return a stable, valid-looking value
+        if (format === 'email') return 'existing@example.com';
+        break;
+      case 'invalid_department':
+        // Treat as invalid enum if present
+        if (Array.isArray(propSchema.enum) && propSchema.enum.length > 0) return '__INVALID_ENUM__';
+        break;
+    }
+
+    // VALID or default generation
+    if (Array.isArray(propSchema.enum) && propSchema.enum.length > 0) {
+      return propSchema.enum[0];
+    }
+
+    if (type === 'string') {
+      if (format === 'email') return faker.internet.email().toLowerCase();
+      if (format === 'uuid') return faker.string.uuid();
+      if (format === 'date-time') return new Date().toISOString();
+      const min = propSchema.minLength || 3;
+      const max = propSchema.maxLength || Math.max(8, min + 4);
+      const len = Math.max(min, Math.min(max, 10));
+      return faker.string.alpha(len);
+    }
+
+    if (type === 'integer') {
+      const min = typeof propSchema.minimum === 'number' ? propSchema.minimum : 1;
+      const max = typeof propSchema.maximum === 'number' ? propSchema.maximum : Math.max(min + 10, 100);
+      return faker.number.int({ min, max });
+    }
+
+    if (type === 'number') {
+      const min = typeof propSchema.minimum === 'number' ? propSchema.minimum : 1;
+      const max = typeof propSchema.maximum === 'number' ? propSchema.maximum : Math.max(min + 10, 100);
+      return faker.number.float({ min, max });
+    }
+
+    if (type === 'boolean') {
+      return faker.datatype.boolean();
+    }
+
+    if (type === 'array') {
+      const items = propSchema.items || { type: 'string' };
+      const count = 1;
+      return Array.from({ length: count }, () => this.generateValueForSchema(items, dataType));
+    }
+
+    if (type === 'object' || propSchema.properties) {
+      return this.generateFromSchema(propSchema, dataType);
+    }
+
+    return faker.lorem.word();
   }
 
   /**
@@ -245,17 +284,15 @@ export class LangGraphTestDataManager {
     switch (param.type) {
       case 'string':
         if (param.format === 'email') return faker.internet.email().toLowerCase();
-        if (param.name === 'department') return faker.helpers.arrayElement(this.validDepartments);
-        return faker.lorem.word();
+        return faker.string.alpha(8);
       case 'integer':
       case 'number':
-        if (param.name === 'age') return faker.number.int({ min: 18, max: 65 });
         if (param.name === 'id') return faker.number.int({ min: 1, max: 1000 });
         return faker.number.int({ min: 1, max: 100 });
       case 'boolean':
         return faker.datatype.boolean();
       default:
-        return faker.lorem.word();
+        return faker.string.alpha(8);
     }
   }
 
@@ -270,36 +307,28 @@ export class LangGraphTestDataManager {
    * Get valid departments
    */
   getValidDepartments(): string[] {
-    return [...this.validDepartments];
+    // Deprecated: domain-specific concept removed; return empty list for compatibility
+    return [];
   }
 
   /**
    * Generate test data seeding instructions for documentation
    */
   generateTestDataSeedingInstructions(): string {
-    return `
-# Test Data Seeding Instructions
-
-For reliable test execution, the following test data is generated using Faker with a fixed seed (12345):
-
-## Base Test Users (Generated with Faker):
-${this.testUsers.map((user) => `- User ID ${user.id}: ${user.name} (${user.email}) - ${user.department}, Age: ${user.age}`).join('\n')}
-
-## Valid Departments:
-${this.validDepartments.map((dept) => `- ${dept}`).join('\n')}
-
-## Test Data Features:
-- **Realistic Data**: Generated using Faker.js for authentic names, emails, and ages
-- **Consistent Results**: Fixed seed (12345) ensures reproducible test data across runs
-- **Variety**: Each test run generates varied but valid data within constraints
-- **Professional Quality**: Business-realistic names, properly formatted emails, valid ages
-
-## API Server Setup:
-1. Ensure the demo API server is running on http://localhost:8081
-2. Seed the database with the test users above (generated with Faker)
-3. Configure department validation with the valid departments
-4. Implement proper email uniqueness validation
-5. Test data will be consistent across runs due to seeded Faker generation
-`;
+    return (
+      '# Test Data Seeding Instructions\n\n' +
+      'Spectra uses Faker with a fixed seed (12345) to generate deterministic, backend-agnostic sample data based on your OpenAPI schemas. No domain-specific fixtures (like departments or emails) are assumed unless explicitly defined in your spec.\n\n' +
+      '## Determinism\n' +
+      '- Fixed Seed: Ensures reproducible test data across runs\n' +
+      '- Spec-Driven: Values are generated from types, formats, enums, and examples in your OpenAPI schema\n\n' +
+      '## Guidance\n' +
+      '- Provide meaningful example/examples and enum values in your schema to steer realistic data\n' +
+      '- Include constraints like minLength, maxLength, minimum, maximum, and format for better test coverage\n\n' +
+      '## API Server Setup\n' +
+      '1. Ensure your API server is running and accessible\n' +
+      '2. If your endpoints require existing resource IDs, seed minimal records accordingly\n' +
+      '3. Authentication headers should be configured per your environment\n' +
+      '4. Test data will be consistent across runs due to seeded Faker generation\n'
+    );
   }
 }

@@ -41,6 +41,152 @@ export class AIService {
   }
 
   /**
+   * Ask LLM to produce a compact test plan from OpenAPI, suitable to build cURLs.
+   * Returns an array of steps: { id, method, path, pathParams?, query?, headers?, contentType?, body?, files?, expect: { status } }
+   */
+  async generateCurlPlanFromSpec(openapi: any, maxSteps = 10): Promise<Array<any>> {
+    const specStr = JSON.stringify(openapi);
+    const prompt = `You are an API testing assistant. Given the following OpenAPI (may be summarized), produce a JSON object with a 'steps' array. Each step must strictly follow this schema:
+{
+  "id": string,
+  "method": "GET"|"POST"|"PUT"|"DELETE"|"PATCH",
+  "path": string, // may contain {variables}
+  "pathParams"?: object, // values for path variables
+  "query"?: object, // include realistic mock values for all documented query params
+  "headers"?: object, // include required headers; if securitySchemes present, include appropriate Authorization or apiKey header
+  "contentType"?: "application/json"|"multipart/form-data"|"application/octet-stream",
+  "body"?: object, // JSON body with realistic mock values that satisfy the schema (use examples/enums when provided)
+  "files"?: [{ "fieldName": string, "filePath"?: string, "contentType"?: string }], // for multipart as indicated by spec
+  "expect": { "status": number | number[] }
+}
+CRITICAL RULES:
+- Fill ALL path variables: for each {var} in path, include a concrete value in pathParams.
+- Use only fields/types present in the spec; prefer example/default/enum values.
+- Satisfy validation constraints (minLength, maxLength, format, minimum, maximum, pattern) when generating values.
+- If security is defined (e.g., bearer, apiKey), include a placeholder credential in headers (e.g., "Authorization": "Bearer test-token").
+- For POST/PUT/PATCH, include a complete body that validates against the schema.
+- For GET, place non-path parameters in 'query', not in body.
+- Include at least one happy-path flow; capture identifiers when applicable for follow-up steps.
+- Keep steps backend-agnostic and executable without extra context.
+- Return ONLY the JSON, no commentary.
+
+Max steps: ${maxSteps}
+
+OpenAPI (truncated if long):\n${specStr.slice(0, 45000)}\n`;
+
+    const resp = await this.openai.chat.completions.create({
+      model: this.largeContextModel,
+      messages: [
+        { role: 'system', content: 'Return ONLY JSON. No markdown. Ensure valid JSON.' },
+        { role: 'user', content: prompt },
+      ],
+      max_completion_tokens: 3000,
+      ...(this.isO4Model ? {} : { temperature: 0.2 }),
+    });
+
+    const content = resp.choices[0]?.message?.content || '{}';
+    const parsed = this.extractAndParseJSON(content) || { steps: [] };
+    if (!Array.isArray(parsed.steps)) return [];
+    return parsed.steps.slice(0, maxSteps);
+  }
+
+  /**
+   * Generate categorized scenarios (functional, security, performance, reliability, boundary)
+   * from an OpenAPI specification. Returns strict JSON only.
+   */
+  async generateCategorizedScenariosFromSpec(openapi: any, maxPerCategory = 10): Promise<any> {
+    const specStr = JSON.stringify(openapi);
+    const prompt = `You are an API testing strategist. From the following OpenAPI, generate categorized testing scenarios.
+Return ONLY a JSON object with this exact structure:
+{
+  "functional": [
+    {
+      "id": string,
+      "endpoint": string, // e.g., "/api/v1/users/{id}"
+      "method": "GET"|"POST"|"PUT"|"DELETE"|"PATCH",
+      "description": string,
+      "preconditions"?: string[],
+      "request"?: object, // body and/or query params as applicable
+      "headers"?: object,
+      "expected": { "status": number | number[], "schemaRef"?: string }
+    }
+  ],
+  "security": [
+    {
+      "id": string,
+      "endpoint": string,
+      "method": "GET"|"POST"|"PUT"|"DELETE"|"PATCH",
+      "type": "auth-missing"|"auth-invalid"|"rbac"|"injection"|"xss"|"broken-obj-level",
+      "description": string,
+      "headers"?: object,
+      "request"?: object,
+      "expected": { "status": number | number[] }
+    }
+  ],
+  "performance": [
+    {
+      "id": string,
+      "endpoint": string,
+      "method": "GET"|"POST"|"PUT"|"DELETE"|"PATCH",
+      "description": string,
+      "load": { "vus": number, "durationSec": number },
+      "thresholds"?: { "p95Ms"?: number, "rpsMin"?: number }
+    }
+  ],
+  "reliability": [
+    {
+      "id": string,
+      "endpoint": string,
+      "method": "GET"|"POST"|"PUT"|"DELETE"|"PATCH",
+      "description": string,
+      "executions": number,
+      "minSuccessRate": number // 0..1
+    }
+  ],
+  "boundary": [
+    {
+      "id": string,
+      "endpoint": string,
+      "method": "GET"|"POST"|"PUT"|"DELETE"|"PATCH",
+      "description": string,
+      "request"?: object,
+      "expected": { "status": number | number[] }
+    }
+  ]
+}
+Rules:
+- Use only endpoints and schemas present in the OpenAPI; honor examples/enums.
+- For functional, include at least: happy path, not found, validation error.
+- For security, include: missing/invalid auth if securitySchemes exist; at least one injection or BOL test where applicable.
+- For performance, pick top endpoints by likelihood (e.g., list endpoints); keep small load params.
+- For reliability, pick idempotent GET endpoints.
+- For boundary, use min/max lengths, invalid formats, and enum out-of-range.
+- Limit each category to at most ${maxPerCategory} items.
+- Return ONLY the JSON. No markdown.`;
+
+    const response = await this.openai.chat.completions.create({
+      model: this.largeContextModel,
+      messages: [
+        { role: 'system', content: 'Return ONLY JSON. Ensure valid, parseable JSON.' },
+        { role: 'user', content: `${prompt}\n\nOpenAPI (truncated):\n${specStr.slice(0, 45000)}` },
+      ],
+      max_completion_tokens: 4000,
+      ...(this.isO4Model ? {} : { temperature: 0.2 }),
+    });
+
+    const content = response.choices[0]?.message?.content || '{}';
+    const parsed = this.extractAndParseJSON(content) || {};
+    // Ensure shape
+    return {
+      functional: Array.isArray(parsed.functional) ? parsed.functional.slice(0, maxPerCategory) : [],
+      security: Array.isArray(parsed.security) ? parsed.security.slice(0, maxPerCategory) : [],
+      performance: Array.isArray(parsed.performance) ? parsed.performance.slice(0, maxPerCategory) : [],
+      reliability: Array.isArray(parsed.reliability) ? parsed.reliability.slice(0, maxPerCategory) : [],
+      boundary: Array.isArray(parsed.boundary) ? parsed.boundary.slice(0, maxPerCategory) : [],
+    };
+  }
+
+  /**
    * Generate a complete API specification using AI based on codebase analysis
    * @param analysisResult Result of codebase analysis with detected language, framework, etc.
    * @returns AI-enhanced full API structure

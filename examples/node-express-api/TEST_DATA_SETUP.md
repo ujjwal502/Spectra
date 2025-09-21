@@ -1,28 +1,17 @@
-
 # Test Data Seeding Instructions
 
-For reliable test execution, the following test data is generated using Faker with a fixed seed (12345):
+Spectra uses Faker with a fixed seed (12345) to generate deterministic, backend-agnostic sample data based on your OpenAPI schemas. No domain-specific fixtures (like departments or emails) are assumed unless explicitly defined in your spec.
 
-## Base Test Users (Generated with Faker):
-- User ID 1: Erick Doyle (violet74@yahoo.com) - Engineering, Age: 25
-- User ID 2: Ms. Eula Schroeder (ludie43@hotmail.com) - Marketing, Age: 40
-- User ID 3: Mr. Ricardo Balistreri (jerad89@gmail.com) - Sales, Age: 36
+## Determinism
+- Fixed Seed: Ensures reproducible test data across runs
+- Spec-Driven: Values are generated from types, formats, enums, and examples in your OpenAPI schema
 
-## Valid Departments:
-- Engineering
-- Marketing
-- Sales
-- HR
+## Guidance
+- Provide meaningful example/examples and enum values in your schema to steer realistic data
+- Include constraints like minLength, maxLength, minimum, maximum, and format for better test coverage
 
-## Test Data Features:
-- **Realistic Data**: Generated using Faker.js for authentic names, emails, and ages
-- **Consistent Results**: Fixed seed (12345) ensures reproducible test data across runs
-- **Variety**: Each test run generates varied but valid data within constraints
-- **Professional Quality**: Business-realistic names, properly formatted emails, valid ages
-
-## API Server Setup:
-1. Ensure the demo API server is running on http://localhost:8081
-2. Seed the database with the test users above (generated with Faker)
-3. Configure department validation with the valid departments
-4. Implement proper email uniqueness validation
-5. Test data will be consistent across runs due to seeded Faker generation
+## API Server Setup
+1. Ensure your API server is running and accessible
+2. If your endpoints require existing resource IDs, seed minimal records accordingly
+3. Authentication headers should be configured per your environment
+4. Test data will be consistent across runs due to seeded Faker generation
