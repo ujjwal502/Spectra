@@ -100,6 +100,7 @@ export interface TestCase {
   endpoint: string;
   method: string;
   request?: any;
+  headers?: Record<string, string>;
   expectedResponse?: any;
   files?: FileUpload[];
 }

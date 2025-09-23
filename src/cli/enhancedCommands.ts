@@ -5,13 +5,11 @@ import * as fs from 'fs';
 export function addEnhancedCommands(program: Command): void {
   program
     .command('run-intelligent-testing')
-    .description('Run intelligent testing on a given API spec')
+    .description('Run intelligent testing (LLM-only unified flow) on a given API spec')
     .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
     .option('--base-url <url>', 'Override base URL used for requests (e.g., http://host.docker.internal:3000)')
-    .option('--code-root <path>', 'Root directory of the API codebase for context')
-    .option('--context-depth <n>', 'Approximate context token budget per prompt', '1200')
-    .option('--self-heal', 'Enable one or more self-heal retries on failure', false)
-    .option('--max-retries <n>', 'Max retries for self-heal', '1')
+    .option('--auth-bearer <token>', 'Add Authorization: Bearer <token> to all requests')
+    .option('-H, --header <key:value...>', 'Add arbitrary headers to all requests (repeatable)')
     .action(async (apiSpecPath: string, opts: any) => {
       try {
         console.log('Starting intelligent testing...');
@@ -35,18 +33,31 @@ export function addEnhancedCommands(program: Command): void {
         const specContent = fs.readFileSync(apiSpecPath, 'utf-8');
         const apiSpec = JSON.parse(specContent);
 
-        console.log('🧠 Initializing intelligent testing agent...');
+        console.log('🧠 Initializing intelligent testing agent (LLM-only unified)...');
+
+        // Build global headers from CLI options
+        const globalHeaders: Record<string, string> = {};
+        if (opts.authBearer) {
+          globalHeaders['Authorization'] = `Bearer ${opts.authBearer}`;
+        }
+        if (opts.header) {
+          const headerEntries: string[] = Array.isArray(opts.header) ? opts.header : [opts.header];
+          for (const h of headerEntries) {
+            const idx = String(h).indexOf(':');
+            if (idx > 0) {
+              const k = String(h).slice(0, idx).trim();
+              const v = String(h).slice(idx + 1).trim();
+              if (k) globalHeaders[k] = v;
+            }
+          }
+        }
         const agent = new LangGraphTestingAgent({
-          codeRoot: opts.codeRoot,
-          contextDepth: parseInt(opts.contextDepth || '1200', 10),
-          selfHeal: !!opts.selfHeal,
-          maxRetries: parseInt(opts.maxRetries || '1', 10),
+          headers: Object.keys(globalHeaders).length ? globalHeaders : undefined,
         });
 
         console.log('🎯 Executing intelligent testing workflow...');
 
         // Determine output directory based on API spec path
-        const path = await import('path');
         const outputDir = path.dirname(apiSpecPath);
 
         const result = await agent.executeIntelligentTesting(apiSpec, outputDir);
@@ -126,193 +137,27 @@ export function addEnhancedCommands(program: Command): void {
       }
     });
 
+  // Deprecate old commands by routing to unified flow
   program
     .command('llm-curl')
-    .description('Generate and execute cURL requests using LLM from an OpenAPI spec')
+    .description('[Deprecated] Use run-intelligent-testing instead. This routes to the unified flow.')
     .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
-    .option('--base-url <url>', 'Override base URL used for requests')
-    .option('--max-steps <n>', 'Maximum number of steps to request from LLM', '10')
-    .option('--report', 'Generate JSON and HTML reports', false)
-    .option('--out <dir>', 'Output directory for reports (defaults next to spec)', '')
-    .action(async (apiSpecPath: string, opts: any) => {
-      try {
-        console.log('🧪 LLM-cURL Mode');
-        console.log('📄 API Spec:', apiSpecPath);
-
-        if (!fs.existsSync(apiSpecPath)) {
-          throw new Error(`API spec file not found: ${apiSpecPath}`);
-        }
-
-        const specContent = fs.readFileSync(apiSpecPath, 'utf-8');
-        const apiSpec = JSON.parse(specContent);
-
-        // Validate spec with swagger-parser
-        const { validateOpenApiSpec } = await import('../utils/specValidator');
-        const validation = await validateOpenApiSpec(apiSpec);
-        if (!validation.valid) {
-          console.error('❌ OpenAPI validation failed:');
-          for (const err of validation.errors || []) console.error(`  - ${err}`);
-          process.exit(1);
-        }
-        console.log('✅ OpenAPI spec is valid. Proceeding with LLM cURL generation...');
-
-        const { AIService } = await import('../services/aiService');
-        const ai = new AIService();
-
-        // Ask LLM for a simple functional step plan (JSON)
-        const steps = await ai.generateCurlPlanFromSpec(apiSpec, parseInt(opts.maxSteps || '10', 10));
-
-        // Ask LLM for categorized scenarios as well
-        const categorized = await ai.generateCategorizedScenariosFromSpec(apiSpec, parseInt(opts.maxSteps || '10', 10));
-
-        // Merge to a unified scenario list: functional steps + categorized
-        const scenarios: any[] = [];
-        // map steps -> minimal functional scenarios
-        steps.forEach((step: any, idx: number) => {
-          scenarios.push({
-            id: String(step.id || `llm_${idx + 1}`),
-            type: 'functional',
-            endpoint: String(step.path || '/'),
-            method: String(step.method || 'GET').toUpperCase(),
-            description: `LLM step ${idx + 1}: ${String(step.method || 'GET').toUpperCase()} ${String(step.path || '/')}`,
-            intent: 'LLM-generated functional test',
-            testData: { ...(step.pathParams || {}), ...(step.query || {}), ...(step.body || {}) },
-            expectedOutcome: { statusCode: Array.isArray(step.expect?.status) ? step.expect.status[0] : step.expect?.status ?? 200 },
-            headers: step.headers || {},
-          });
-        });
-        // add categorized scenarios (functional/security/performance/reliability/boundary)
-        const addCat = (list: any[], type: string) => {
-          (list || []).forEach((s: any, i: number) => {
-            scenarios.push({
-              id: String(s.id || `${type}_${i + 1}`),
-              type,
-              endpoint: String(s.endpoint || '/'),
-              method: String(s.method || 'GET').toUpperCase(),
-              description: s.description || `${type} scenario`,
-              intent: s.intent || `${type} test`,
-              testData: s.request || {},
-              expectedOutcome: { statusCode: Array.isArray(s.expected?.status) ? s.expected.status[0] : s.expected?.status ?? 200 },
-              headers: s.headers || {},
-            });
-          });
-        };
-        addCat(categorized.functional, 'functional');
-        addCat(categorized.security, 'security');
-        addCat(categorized.performance, 'performance');
-        addCat(categorized.reliability, 'reliability');
-        addCat(categorized.boundary, 'boundary');
-
-        const { CurlRunner } = await import('../runners/curlRunner');
-        const runner = new CurlRunner(opts.baseUrl || '');
-
-        const execResults: any[] = [];
-        for (const sc of scenarios) {
-          const started = Date.now();
-          try {
-            // Build request object from scenario
-            const request: any = sc.testData || {};
-            let endpoint = sc.endpoint || '/';
-            // Substitute path params from request where present
-            Object.keys(request).forEach((k) => {
-              if (endpoint.includes(`{${k}}`)) {
-                endpoint = endpoint.replace(`{${k}}`, String(request[k]));
-                delete request[k];
-              }
-            });
-            const testCase: any = {
-              id: sc.id,
-              endpoint,
-              method: String(sc.method || 'GET').toUpperCase(),
-              request,
-              headers: sc.headers || {},
-              expectedResponse: { status: sc.expectedOutcome?.statusCode || 200 },
-              files: [],
-            };
-            const result = await runner.executeTest(testCase);
-            execResults.push({ id: sc.id, success: result.success, status: result.response?.status, duration: result.duration });
-          } catch (e: any) {
-            execResults.push({ id: sc.id, success: false, error: e.message, duration: Date.now() - started });
-          }
-        }
-
-        const passed = execResults.filter((r) => r.success).length;
-        console.log(`\n✅ Passed: ${passed}/${execResults.length}`);
-
-        // Optional reporting
-        const pathMod = await import('path');
-        const outDir = opts.out || pathMod.join(pathMod.dirname(apiSpecPath), 'spectra', 'llm-curl');
-        if (opts.report) {
-          const { writeJsonReport, writeHtmlReport } = await import('../utils/report');
-          const jsonFile = writeJsonReport({
-            timestamp: new Date().toISOString(),
-            sourceSpec: apiSpecPath,
-            baseUrl: opts.baseUrl || '',
-            total: execResults.length,
-            passed,
-            failed: execResults.length - passed,
-            results: execResults.map((r: any) => ({ id: r.id, success: !!r.success, status: r.status, duration: r.duration, error: r.error })),
-          }, outDir);
-          const htmlFile = writeHtmlReport({
-            timestamp: new Date().toISOString(),
-            sourceSpec: apiSpecPath,
-            baseUrl: opts.baseUrl || '',
-            total: execResults.length,
-            passed,
-            failed: execResults.length - passed,
-            results: execResults.map((r: any) => ({ id: r.id, success: !!r.success, status: r.status, duration: r.duration, error: r.error })),
-          }, outDir);
-          console.log(`📝 Report saved: ${jsonFile}`);
-          console.log(`📝 Report saved: ${htmlFile}`);
-        }
-
-        // Full detailed report artifacts (scenarios, test-cases, dashboard)
-        const { writeFullLlmReports } = await import('../utils/llmFullReport');
-        await writeFullLlmReports(apiSpecPath, apiSpec, scenarios, execResults, outDir);
-        console.log(`📝 Full detailed reports saved under: ${outDir}`);
-
-        process.exit(passed === execResults.length ? 0 : 1);
-      } catch (error) {
-        console.error('❌ Error in llm-curl:', error);
-        process.exit(1);
-      }
+    .allowUnknownOption(true)
+    .action(async (apiSpecPath: string, _opts: any) => {
+      console.log('⚠️  llm-curl is deprecated. Routing to run-intelligent-testing (unified flow)...');
+      const args = process.argv.filter((a) => !a.includes('llm-curl'));
+      args.splice(args.indexOf('enhanced.ts') + 1, 0, 'run-intelligent-testing');
+      process.argv = args;
+      await import('./enhanced');
     });
 
   program
     .command('llm-scenarios')
-    .description('Generate functional, security, performance scenarios from an OpenAPI spec using LLM')
+    .description('[Deprecated] Scenarios are generated within the unified flow. Use run-intelligent-testing.')
     .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
-    .option('--max <n>', 'Max scenarios per category', '10')
-    .action(async (apiSpecPath: string, opts: any) => {
-      try {
-        console.log('🧠 LLM-Scenarios Mode');
-        console.log('📄 API Spec:', apiSpecPath);
-
-        if (!fs.existsSync(apiSpecPath)) {
-          throw new Error(`API spec file not found: ${apiSpecPath}`);
-        }
-
-        const specContent = fs.readFileSync(apiSpecPath, 'utf-8');
-        const apiSpec = JSON.parse(specContent);
-
-        // Validate spec
-        const { validateOpenApiSpec } = await import('../utils/specValidator');
-        const validation = await validateOpenApiSpec(apiSpec);
-        if (!validation.valid) {
-          console.error('❌ OpenAPI validation failed:');
-          for (const err of validation.errors || []) console.error(`  - ${err}`);
-          process.exit(1);
-        }
-
-        const { AIService } = await import('../services/aiService');
-        const ai = new AIService();
-        const scenarios = await ai.generateCategorizedScenariosFromSpec(apiSpec, parseInt(opts.max || '10', 10));
-
-        // Print JSON to stdout only
-        console.log(JSON.stringify(scenarios, null, 2));
-      } catch (error) {
-        console.error('❌ Error in llm-scenarios:', error);
-        process.exit(1);
-      }
+    .allowUnknownOption(true)
+    .action(async (_apiSpecPath: string) => {
+      console.log('⚠️  llm-scenarios is deprecated. Use run-intelligent-testing to generate and execute scenarios.');
+      process.exit(0);
     });
 }

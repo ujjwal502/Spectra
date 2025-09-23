@@ -82,7 +82,7 @@ export interface SchemaInfo {
 
 export interface TestScenario {
   id: string;
-  type: 'functional' | 'security' | 'boundary' | 'error' | 'integration';
+  type: 'functional' | 'security' | 'boundary' | 'error' | 'integration' | 'performance' | 'reliability';
   endpoint: string;
   method: string;
   description: string;

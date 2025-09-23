@@ -48,7 +48,7 @@ export class CurlRunner {
 
       const url = this.constructUrl(endpoint, request);
 
-      const curlCommand = this.buildCurlCommand(url, method, request, files, (testCase as any).headers);
+      const curlCommand = this.buildCurlCommand(url, method, request, files, testCase.headers);
       console.log('🚀 [CURL-RUNNER] Generated cURL command:', curlCommand);
 
       const scriptPath = this.createTempScript(id, curlCommand);

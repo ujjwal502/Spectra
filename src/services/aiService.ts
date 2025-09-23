@@ -80,7 +80,7 @@ OpenAPI (truncated if long):\n${specStr.slice(0, 45000)}\n`;
         { role: 'system', content: 'Return ONLY JSON. No markdown. Ensure valid JSON.' },
         { role: 'user', content: prompt },
       ],
-      max_completion_tokens: 3000,
+      max_tokens: 1200,
       ...(this.isO4Model ? {} : { temperature: 0.2 }),
     });
 
@@ -170,7 +170,7 @@ Rules:
         { role: 'system', content: 'Return ONLY JSON. Ensure valid, parseable JSON.' },
         { role: 'user', content: `${prompt}\n\nOpenAPI (truncated):\n${specStr.slice(0, 45000)}` },
       ],
-      max_completion_tokens: 4000,
+      max_tokens: 1500,
       ...(this.isO4Model ? {} : { temperature: 0.2 }),
     });
 
@@ -178,12 +178,68 @@ Rules:
     const parsed = this.extractAndParseJSON(content) || {};
     // Ensure shape
     return {
-      functional: Array.isArray(parsed.functional) ? parsed.functional.slice(0, maxPerCategory) : [],
+      functional: Array.isArray(parsed.functional)
+        ? parsed.functional.slice(0, maxPerCategory)
+        : [],
       security: Array.isArray(parsed.security) ? parsed.security.slice(0, maxPerCategory) : [],
-      performance: Array.isArray(parsed.performance) ? parsed.performance.slice(0, maxPerCategory) : [],
-      reliability: Array.isArray(parsed.reliability) ? parsed.reliability.slice(0, maxPerCategory) : [],
+      performance: Array.isArray(parsed.performance)
+        ? parsed.performance.slice(0, maxPerCategory)
+        : [],
+      reliability: Array.isArray(parsed.reliability)
+        ? parsed.reliability.slice(0, maxPerCategory)
+        : [],
       boundary: Array.isArray(parsed.boundary) ? parsed.boundary.slice(0, maxPerCategory) : [],
     };
+  }
+
+  /**
+   * Directly generate BDD Gherkin features from an OpenAPI spec via LLM.
+   * Returns an array of features with title, description, background, scenarios, tags, and endpointContext.
+   */
+  async generateGherkinFeaturesFromSpec(openapi: any, maxFeatures = 20): Promise<any[]> {
+    const specStr = JSON.stringify(openapi);
+    const prompt = `You are a senior QA/BAs writing BDD features.
+From this OpenAPI, produce Gherkin Features in strict JSON form.
+Return ONLY JSON with this shape:
+[
+  {
+    "title": string,
+    "description": string,
+    "background"?: { "title": string, "steps": [{ "keyword": "Given"|"When"|"Then"|"And"|"But", "text": string }] },
+    "scenarios": [
+      {
+        "title": string,
+        "description"?: string,
+        "tags": string[],
+        "steps": [{ "keyword": "Given"|"When"|"Then"|"And"|"But", "text": string }],
+        "examples"?: { "headers": string[], "rows": string[][] }
+      }
+    ],
+    "tags": string[],
+    "endpointContext": { "path": string, "method": string, "businessDomain": string }
+  }
+]
+Rules:
+- Group scenarios by endpoint. Cover functional, security, boundary and error.
+- If securitySchemes exist, add a background step to set auth.
+- Keep scenarios realistic and aligned with schema constraints.
+- Limit to at most ${maxFeatures} features.
+- Return ONLY JSON.`;
+
+    const response = await this.openai.chat.completions.create({
+      model: this.largeContextModel,
+      messages: [
+        { role: 'system', content: 'Return ONLY JSON. Ensure valid, parseable JSON.' },
+        { role: 'user', content: `${prompt}\n\nOpenAPI (truncated):\n${specStr.slice(0, 45000)}` },
+      ],
+      // Keep well within common model limits to avoid 400 errors
+      max_tokens: 1500,
+      ...(this.isO4Model ? {} : { temperature: 0.2 }),
+    });
+
+    const content = response.choices[0]?.message?.content || '[]';
+    const parsed = this.extractAndParseJSON(content) || [];
+    return Array.isArray(parsed) ? parsed.slice(0, maxFeatures) : [];
   }
 
   /**
@@ -742,7 +798,7 @@ Your response should start with "{" and end with "}" with no other text before o
             },
             { role: 'user', content: prompt },
           ],
-          max_completion_tokens: 4000,
+          max_tokens: 800,
           ...(this.isO4Model ? {} : { temperature: 0.7 }),
         }),
         // Add timeout
@@ -783,7 +839,7 @@ Your response should start with "{" and end with "}" with no other text before o
             },
             { role: 'user', content: prompt },
           ],
-          max_completion_tokens: 4000,
+          max_tokens: 800,
           ...(this.isO4Model ? {} : { temperature: 0.7 }),
         }),
         // Add timeout
@@ -941,6 +997,20 @@ Your response should start with "{" and end with "}" with no other text before o
       processedText = processedText.replace(/\/\/.*$/gm, ''); // Remove single-line comments
       processedText = processedText.replace(/\/\*[\s\S]*?\*\//g, '');
 
+      // Normalize common non-JSON constructs emitted by models
+      // Replace "a".repeat(256) → "aaaa..." to restore valid JSON
+      processedText = processedText.replace(/"(.)"\.repeat\(\s*(\d+)\s*\)/g, (_m, ch, n) => {
+        const count = parseInt(n as string, 10);
+        const repeated = (ch as string).repeat(Number.isFinite(count) ? count : 1);
+        return '"' + repeated + '"';
+      });
+      // Replace '\'a\''.repeat(\d+) if it sneaks in (non-standard JSON)
+      processedText = processedText.replace(/'(.)'\.repeat\(\s*(\d+)\s*\)/g, (_m, ch, n) => {
+        const count = parseInt(n as string, 10);
+        const repeated = (ch as string).repeat(Number.isFinite(count) ? count : 1);
+        return '"' + repeated + '"';
+      });
+
       try {
         console.log('Trying to parse after removing comments and code blocks');
         return JSON.parse(processedText);
@@ -951,50 +1021,90 @@ Your response should start with "{" and end with "}" with no other text before o
 
         // Enhanced JSON repair approach
         try {
-          // First try to find valid JSON between braces
-          const jsonRegex = /{[\s\S]*}/m;
-          const match = processedText.match(jsonRegex);
-
-          if (match && match[0]) {
-            console.log(`Found JSON-like content (${match[0].length} chars)`);
+          // Use balanced scanner to capture top-level JSON object or array
+          const scanned = this.scanBalancedJSON(processedText);
+          if (scanned) {
+            console.log(`Found JSON-like content (${scanned.length} chars)`);
             try {
-              return JSON.parse(match[0]);
+              return JSON.parse(scanned);
             } catch (extractError: any) {
               console.log('Extracted content parsing failed:', extractError.message);
-
-              // More aggressive JSON repair
-              const originalJson = match[0];
-              let repairedJson = originalJson;
-
-              // Fix unclosed quotes in property names and string values
-              repairedJson = this.fixUnclosedStrings(repairedJson);
-
-              // Fix unbalanced braces and brackets
+              let repairedJson = this.fixUnclosedStrings(scanned);
               repairedJson = this.fixUnbalancedBraces(repairedJson);
-
-              // Fix trailing commas
               repairedJson = repairedJson.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
-
               try {
                 console.log('Attempting to parse repaired JSON');
                 return JSON.parse(repairedJson);
               } catch (repairError: any) {
                 console.log('Repaired JSON parsing failed:', repairError.message);
-
-                // Last resort: try to extract key parts of the JSON structure
                 return this.attemptJSONRecovery(processedText);
               }
             }
-          } else {
-            // No valid JSON found, try the recovery approach
-            return this.attemptJSONRecovery(processedText);
           }
+
+          // No valid JSON found, try the recovery approach
+          return this.attemptJSONRecovery(processedText);
         } catch (error) {
           console.error('All JSON extraction attempts failed');
           return this.attemptJSONRecovery(processedText);
         }
       }
     }
+  }
+
+  /**
+   * Scan string to find first balanced top-level JSON object or array.
+   * Handles leading/trailing noise and nested structures.
+   */
+  private scanBalancedJSON(text: string): string | null {
+    const starts = [] as Array<{ idx: number; brace: '{' | '[' }>;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '{' || ch === '[') starts.push({ idx: i, brace: ch as '{' | '[' });
+    }
+    // Prefer earliest viable start
+    for (const s of starts) {
+      const wantClose = s.brace === '{' ? '}' : ']';
+      let depthObj = 0;
+      let depthArr = 0;
+      let inStr = false;
+      let esc = false;
+      for (let j = s.idx; j < text.length; j++) {
+        const c = text[j];
+        if (inStr) {
+          if (esc) {
+            esc = false;
+            continue;
+          }
+          if (c === '\\') {
+            esc = true;
+            continue;
+          }
+          if (c === '"') {
+            inStr = false;
+            continue;
+          }
+          continue;
+        }
+        if (c === '"') {
+          inStr = true;
+          continue;
+        }
+        if (c === '{') depthObj++;
+        else if (c === '}') depthObj--;
+        else if (c === '[') depthArr++;
+        else if (c === ']') depthArr--;
+        if (depthObj < 0 || depthArr < 0) break;
+        if (depthObj === 0 && depthArr === 0) {
+          // Ensure matching close for starting brace
+          if (text[j] === wantClose) {
+            const slice = text.slice(s.idx, j + 1).trim();
+            if (slice.startsWith('{') || slice.startsWith('[')) return slice;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   /**

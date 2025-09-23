@@ -18,11 +18,9 @@ import {
   ResponseInfo,
 } from '../types/langGraphTypes';
 import { LangGraphGherkinGenerator } from './langGraphGherkinGenerator';
-import { LangGraphTestDataManager } from './langGraphTestDataManager';
-import { buildCodeIndex, getEndpointContext, getValidationContext, getAuthContext, summarizeForLLM } from '../utils/codeContext';
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
 import { v4 as uuidv4 } from 'uuid';
-import { GherkinFeature } from '../types/langGraphTypes';
+import { GherkinFeature, GherkinSummary } from '../types/langGraphTypes';
 import axios from 'axios';
 import { AIService } from '../services/aiService';
 import { validateOpenApiSpec } from '../utils/specValidator';
@@ -30,24 +28,32 @@ import { validateOpenApiSpec } from '../utils/specValidator';
 export class LangGraphTestingAgent {
   private model: ChatOpenAI;
   private gherkinGenerator: LangGraphGherkinGenerator;
-  private testDataManager: LangGraphTestDataManager;
   private codeRoot?: string;
   private contextDepth: number = 1200;
   private selfHeal: boolean = false;
   private maxRetries: number = 1;
   private currentApiSpec?: OpenAPIV3.Document;
+  private globalHeaders: Record<string, string> = {};
 
-  constructor(options?: { codeRoot?: string; contextDepth?: number; selfHeal?: boolean; maxRetries?: number }) {
+  constructor(options?: {
+    codeRoot?: string;
+    contextDepth?: number;
+    selfHeal?: boolean;
+    maxRetries?: number;
+    headers?: Record<string, string>;
+  }) {
     this.model = new ChatOpenAI({
       modelName: 'gpt-4',
       temperature: 0,
     });
     this.gherkinGenerator = new LangGraphGherkinGenerator();
-    this.testDataManager = new LangGraphTestDataManager();
     this.codeRoot = options?.codeRoot;
-    if (options?.contextDepth && Number.isFinite(options.contextDepth)) this.contextDepth = options.contextDepth;
+    if (options?.contextDepth && Number.isFinite(options.contextDepth))
+      this.contextDepth = options.contextDepth;
     if (typeof options?.selfHeal === 'boolean') this.selfHeal = options.selfHeal;
-    if (options?.maxRetries && Number.isFinite(options.maxRetries)) this.maxRetries = options.maxRetries;
+    if (options?.maxRetries && Number.isFinite(options.maxRetries))
+      this.maxRetries = options.maxRetries;
+    if (options?.headers) this.globalHeaders = { ...options.headers };
   }
 
   /**
@@ -67,6 +73,17 @@ export class LangGraphTestingAgent {
       testScenarios: [],
       testResults: [],
       gherkinFeatures: [],
+      gherkinSummary: {
+        totalFeatures: 0,
+        totalScenarios: 0,
+        featuresByDomain: {},
+        scenariosByType: {},
+        coverageMetrics: {
+          endpointsCovered: 0,
+          businessRulesCovered: 0,
+          errorScenariosCovered: 0,
+        },
+      },
       recommendations: [],
       currentPhase: 'understanding',
       messages: ['Starting intelligent API testing workflow'],
@@ -82,7 +99,9 @@ export class LangGraphTestingAgent {
     if (llmGraph) {
       try {
         const runId = uuidv4();
-        state = (await llmGraph.invoke(state, { configurable: { thread_id: runId } })) as TestingState;
+        state = (await llmGraph.invoke(state, {
+          configurable: { thread_id: runId },
+        })) as TestingState;
       } catch (e) {
         console.log('⚠️ [Spectra TESTING] LLM workflow failed, running sequential fallback:', e);
         state = await this.validateSpecNode(state);
@@ -142,7 +161,7 @@ export class LangGraphTestingAgent {
     }
   }
 
-  // removed legacy buildTestingGraph
+
 
   /**
    * New minimal LLM-driven graph: validate -> generate -> execute -> analyze
@@ -155,18 +174,27 @@ export class LangGraphTestingAgent {
         testResults: Annotation<TestResult[]>(),
         analysis: Annotation<TestAnalysis | undefined>(),
         recommendations: Annotation<string[]>(),
-        currentPhase: Annotation<'understanding' | 'testing' | 'gherkin' | 'execution' | 'analysis' | 'complete'>(),
+        currentPhase: Annotation<
+          'understanding' | 'testing' | 'gherkin' | 'execution' | 'analysis' | 'complete'
+        >(),
         messages: Annotation<string[]>(),
+        systemMap: Annotation<SystemMap | undefined>(),
+        gherkinFeatures: Annotation<GherkinFeature[] | undefined>(),
+        gherkinSummary: Annotation<GherkinSummary | undefined>(),
       });
 
       const graph = new StateGraph(TestState)
         .addNode('validate', async (s: TestingState) => this.validateSpecNode(s))
+        .addNode('understand', async (s: TestingState) => this.analyzeSpecNode(s))
         .addNode('generate', async (s: TestingState) => this.generateLLMStepsNode(s))
+        .addNode('gherkin', async (s: TestingState) => this.generateGherkinNode(s))
         .addNode('execute', async (s: TestingState) => this.executeLLMStepsNode(s))
         .addNode('analyze', async (s: TestingState) => this.analyzeLLMResultsNode(s))
         .addEdge(START, 'validate')
-        .addEdge('validate', 'generate')
-        .addEdge('generate', 'execute')
+        .addEdge('validate', 'understand')
+        .addEdge('understand', 'generate')
+        .addEdge('generate', 'gherkin')
+        .addEdge('gherkin', 'execute')
         .addEdge('execute', 'analyze')
         .addEdge('analyze', END)
         .compile({ checkpointer: new MemorySaver() });
@@ -188,39 +216,105 @@ export class LangGraphTestingAgent {
     }
     return {
       ...state,
-      currentPhase: 'testing',
+      currentPhase: 'understanding',
       messages: [...state.messages, 'OpenAPI spec validated'],
     };
   }
 
-  private async generateLLMStepsNode(state: TestingState): Promise<TestingState> {
-    console.log('🧠 [LLM] Generating executable steps from spec...');
-    const ai = new AIService();
-    const steps = await ai.generateCurlPlanFromSpec(state.apiSpec, 10);
+  private async analyzeSpecNode(state: TestingState): Promise<TestingState> {
+    console.log('🧭 [LLM] Building system map from OpenAPI spec...');
+    const systemMap = await this.analyzeApiSystem(state.apiSpec);
+    return {
+      ...state,
+      systemMap,
+      currentPhase: 'testing',
+      messages: [...state.messages, 'System map generated from spec'],
+    };
+  }
 
-    const scenarios: TestScenario[] = steps.map((step: any, idx: number) => ({
+  private async generateLLMStepsNode(state: TestingState): Promise<TestingState> {
+    console.log('🧠 [LLM] Generating executable steps and categorized scenarios from spec...');
+    const ai = new AIService();
+    const [steps, categorized] = await Promise.all([
+      ai.generateCurlPlanFromSpec(state.apiSpec, 10),
+      ai.generateCategorizedScenariosFromSpec(state.apiSpec, 10),
+    ]);
+
+    const functionalFromSteps: TestScenario[] = steps.map((step: any, idx: number) => ({
       id: String(step.id || `llm_${idx + 1}`),
       type: 'functional',
       endpoint: String(step.path || '/'),
       method: String(step.method || 'GET').toUpperCase(),
       description: `LLM step ${idx + 1}: ${String(step.method || 'GET').toUpperCase()} ${String(step.path || '/')}`,
       intent: 'LLM-generated functional test',
-      testData: {
-        ...(step.pathParams || {}),
-        ...(step.query || {}),
-        ...(step.body || {}),
+      testData: { ...(step.pathParams || {}), ...(step.query || {}), ...(step.body || {}) },
+      expectedOutcome: {
+        statusCode: Array.isArray(step.expect?.status)
+          ? step.expect.status[0]
+          : (step.expect?.status ?? 200),
       },
-      expectedOutcome: { statusCode: Array.isArray(step.expect?.status) ? step.expect.status[0] : step.expect?.status ?? 200 },
       dependencies: [],
     }));
 
-    console.log(`🧠 [LLM] Generated ${scenarios.length} scenarios`);
+    const mapCats = (list: any[], type: TestScenario['type']): TestScenario[] =>
+      (list || []).map((s: any, i: number) => ({
+        id: String(s.id || `${type}_${i + 1}`),
+        type,
+        endpoint: String(s.endpoint || '/'),
+        method: String(s.method || 'GET').toUpperCase(),
+        description: s.description || `${type} scenario`,
+        intent: s.intent || `${type} test`,
+        testData: s.request || {},
+        expectedOutcome: {
+          statusCode: Array.isArray(s.expected?.status)
+            ? s.expected.status[0]
+            : (s.expected?.status ?? 200),
+        },
+        dependencies: [],
+      }));
+
+    const scenarios: TestScenario[] = [
+      ...functionalFromSteps,
+      ...mapCats(categorized.functional, 'functional'),
+      ...mapCats(categorized.security, 'security'),
+      ...mapCats(categorized.performance, 'performance'),
+      ...mapCats(categorized.reliability, 'reliability'),
+      ...mapCats(categorized.boundary, 'boundary'),
+    ];
+
+    console.log(`🧠 [LLM] Generated ${scenarios.length} scenarios (including categorized)`);
     return {
       ...state,
       testScenarios: scenarios,
-      currentPhase: 'execution',
-      messages: [...state.messages, `Generated ${scenarios.length} LLM scenarios`],
+      currentPhase: 'gherkin',
+      messages: [...state.messages, `Generated ${scenarios.length} LLM scenarios (categorized)`],
     };
+  }
+
+  private async generateGherkinNode(state: TestingState): Promise<TestingState> {
+    console.log('🥒 [LLM] Generating Gherkin features from scenarios...');
+    try {
+      // Ensure we have a system map for richer Gherkin context
+      if (!state.systemMap) {
+        const systemMap = await this.analyzeApiSystem(state.apiSpec);
+        state = { ...state, systemMap };
+      }
+      const updated = await this.gherkinGenerator.generateGherkinFeatures(state);
+    return {
+        ...updated,
+        gherkinFeatures: updated.gherkinFeatures || [],
+        gherkinSummary: updated.gherkinSummary || state.gherkinSummary,
+      currentPhase: 'execution',
+      };
+    } catch (e) {
+      console.log('⚠️ [LLM] Gherkin generation failed, continuing without features');
+    return {
+      ...state,
+        gherkinFeatures: state.gherkinFeatures || [],
+        gherkinSummary: state.gherkinSummary,
+        currentPhase: 'execution',
+      };
+    }
   }
 
   private async executeLLMStepsNode(state: TestingState): Promise<TestingState> {
@@ -231,7 +325,14 @@ export class LangGraphTestingAgent {
     runner.setBaseUrl(baseUrl);
 
     const results: TestResult[] = [];
-    for (const scenario of state.testScenarios) {
+    const executableTypes: Array<TestScenario['type']> = [
+      'functional',
+      'security',
+      'boundary',
+      'error',
+      'integration',
+    ];
+    for (const scenario of state.testScenarios.filter((s) => executableTypes.includes(s.type))) {
       const start = Date.now();
       try {
         let endpoint = scenario.endpoint;
@@ -250,7 +351,7 @@ export class LangGraphTestingAgent {
           endpoint,
           method: scenario.method,
           request,
-          headers: {},
+          headers: { ...(this.globalHeaders || {}) },
           expectedResponse: { status: scenario.expectedOutcome.statusCode },
           files: [],
         };
@@ -301,7 +402,11 @@ export class LangGraphTestingAgent {
       phaseResults: { functional: overallSuccessRate },
       criticalIssues: [],
       patterns: [],
-      riskAssessment: { level: overallSuccessRate >= 80 ? 'low' : overallSuccessRate >= 50 ? 'medium' : 'high', factors: [], mitigations: [] },
+      riskAssessment: {
+        level: overallSuccessRate >= 80 ? 'low' : overallSuccessRate >= 50 ? 'medium' : 'high',
+        factors: [],
+        mitigations: [],
+      },
     };
 
     return {
@@ -312,7 +417,6 @@ export class LangGraphTestingAgent {
       messages: [...state.messages, `Analysis complete. Success rate: ${overallSuccessRate}%`],
     };
   }
-
 
   /**
    * Extract base URL from OpenAPI spec servers section
@@ -327,7 +431,9 @@ export class LangGraphTestingAgent {
     
     // Fallback to default URLs - try Node.js first, then Java
     const nodeUrl = 'http://localhost:3000';
-    console.log(`🌐 [SPEC EXTRACTION] No servers found in API spec, using Node.js default: ${nodeUrl}`);
+    console.log(
+      `🌐 [SPEC EXTRACTION] No servers found in API spec, using Node.js default: ${nodeUrl}`,
+    );
     return nodeUrl;
   }
 
@@ -345,7 +451,9 @@ export class LangGraphTestingAgent {
     const nodeUrl = 'http://localhost:3000';
     const javaUrl = 'http://localhost:8081';
     
-    console.log(`🌐 [URL EXTRACTION] No base URL found in system map, trying Node.js default: ${nodeUrl}`);
+    console.log(
+      `🌐 [URL EXTRACTION] No base URL found in system map, trying Node.js default: ${nodeUrl}`,
+    );
     return nodeUrl;
   }
 
@@ -363,13 +471,19 @@ export class LangGraphTestingAgent {
     const baseUrl = this.extractBaseUrlFromApiSpec(apiSpec);
     console.log(`🌐 [AI ANALYSIS] Extracted base URL from API spec: ${baseUrl}`);
 
-    // Extract and analyze endpoints
+    // Analyze endpoints directly from OpenAPI spec (LLM-lite)
     if (apiSpec.paths) {
       for (const [pathTemplate, pathItem] of Object.entries(apiSpec.paths)) {
-        if (!pathItem) continue;
-
-        for (const [method, operation] of Object.entries(pathItem)) {
-          if (typeof operation !== 'object' || !operation) continue;
+        const methods: Array<'get' | 'post' | 'put' | 'delete' | 'patch'> = [
+          'get',
+          'post',
+          'put',
+          'delete',
+          'patch',
+        ];
+        for (const method of methods) {
+          const operation = (pathItem as any)[method];
+          if (!operation) continue;
 
           const endpoint = await this.analyzeEndpoint(pathTemplate, method, operation, apiSpec);
           endpoints.push(endpoint);
@@ -377,24 +491,13 @@ export class LangGraphTestingAgent {
       }
     }
 
-    // Extract and analyze schemas
-    if (apiSpec.components?.schemas) {
-      for (const [schemaName, schema] of Object.entries(apiSpec.components.schemas)) {
-        const schemaInfo = await this.analyzeSchema(schemaName, schema, apiSpec);
+    // Analyze schemas from components
+    if (apiSpec.components && (apiSpec.components as any).schemas) {
+      for (const [schemaName, schema] of Object.entries((apiSpec.components as any).schemas)) {
+        const schemaInfo = await this.analyzeSchema(schemaName, schema as any, apiSpec);
         schemas.push(schemaInfo);
       }
     }
-
-    // Analyze data flow and dependencies using AI
-    const flowAnalysis = await this.analyzeDataFlowWithAI(endpoints, schemas);
-    dataFlow.push(...flowAnalysis.dataFlow);
-    dependencies.push(...flowAnalysis.dependencies);
-
-    console.log(`🔍 [AI ANALYSIS] Analysis complete:
-    📍 ${endpoints.length} endpoints analyzed
-    📊 ${schemas.length} schemas identified  
-    🔄 ${dataFlow.length} data flows mapped
-    🔗 ${dependencies.length} dependencies discovered`);
 
     return {
       endpoints,
@@ -405,7 +508,6 @@ export class LangGraphTestingAgent {
     };
   }
 
-  /* removed: legacy analyzeEndpoint */
   private async analyzeEndpoint(
     pathTemplate: string,
     method: string,
@@ -413,44 +515,34 @@ export class LangGraphTestingAgent {
     apiSpec: OpenAPIV3.Document,
   ): Promise<EndpointInfo> {
     const parameters: ParameterInfo[] = [];
-
-    // Analyze parameters with AI understanding
-    if (operation.parameters) {
-      for (const param of operation.parameters) {
-        const paramInfo = await this.analyzeParameter(param, pathTemplate);
-        parameters.push(paramInfo);
-      }
+    const pathParams = (operation.parameters || []).filter((p: any) => p.in === 'path');
+    for (const p of pathParams) {
+      parameters.push({
+        name: p.name,
+        type: p.schema?.type || 'string',
+        required: !!p.required,
+        format: p.schema?.format,
+      });
     }
 
-    // Analyze request body
-    let requestBody: SchemaInfo | undefined;
-    if (operation.requestBody?.content?.['application/json']?.schema) {
+    let requestBody: SchemaInfo | undefined = undefined;
+    if (operation.requestBody && operation.requestBody.content && operation.requestBody.content['application/json'] && operation.requestBody.content['application/json'].schema) {
       const schema = operation.requestBody.content['application/json'].schema;
       requestBody = await this.analyzeSchema('requestBody', schema, apiSpec);
     }
 
-    // Analyze responses
     const responses: ResponseInfo[] = [];
     if (operation.responses) {
       for (const [statusCode, response] of Object.entries(operation.responses)) {
-        if (typeof response === 'object' && response) {
-          const responseObj = response as any;
+        const content = (response as any).content || {};
+        const schema = content['application/json']?.schema;
           responses.push({
-            statusCode: parseInt(statusCode),
-            schema: responseObj.content?.['application/json']?.schema,
-            description: responseObj.description || '',
-          });
-        }
+          statusCode: parseInt(String(statusCode), 10),
+          schema,
+          description: (response as any).description || '',
+        });
       }
     }
-
-    // AI-powered relationship analysis
-    const relatedEndpoints = await this.findRelatedEndpoints(
-      pathTemplate,
-      method,
-      parameters,
-      apiSpec,
-    );
 
     return {
       path: pathTemplate,
@@ -458,1040 +550,57 @@ export class LangGraphTestingAgent {
       parameters,
       requestBody,
       responses,
-      relatedEndpoints,
-    };
+      relatedEndpoints: [],
+      metadata: {},
+    } as EndpointInfo;
   }
 
-  /* removed: legacy analyzeParameter */
-  private async analyzeParameter(param: any, pathTemplate: string): Promise<ParameterInfo> {
-    // AI-enhanced parameter analysis
-    const validValues = await this.generateValidParameterValues(param, pathTemplate);
-
-    return {
-      name: param.name,
-      type: param.schema?.type || param.type || 'string',
-      required: param.required || false,
-      validValues,
-      format: param.schema?.format || param.format,
-    };
-  }
-
-  /* removed: legacy analyzeSchema */
   private async analyzeSchema(
     schemaName: string,
     schema: any,
     apiSpec: OpenAPIV3.Document,
   ): Promise<SchemaInfo> {
-    // Resolve $ref if present
-    if (schema.$ref) {
-      const refPath = schema.$ref.replace('#/components/schemas/', '');
-      schema = apiSpec.components?.schemas?.[refPath] || schema;
-    }
-
-    // AI-powered example generation
-    const examples = await this.generateSchemaExamples(schemaName, schema);
-
+    const resolved = this.deepDerefSchema(schema);
     return {
       name: schemaName,
-      type: schema.type || 'object',
-      properties: schema.properties || {},
-      required: schema.required || [],
-      examples,
+      type: resolved.type || 'object',
+      properties: resolved.properties || {},
+      required: resolved.required || [],
+      examples: resolved.examples || [],
     };
   }
 
-  /* removed: legacy analyzeDataFlowWithAI */
-  private async analyzeDataFlowWithAI(
-    endpoints: EndpointInfo[],
-    schemas: SchemaInfo[],
-  ): Promise<{ dataFlow: DataFlowInfo[]; dependencies: DependencyInfo[] }> {
-    console.log('🤖 [AI FLOW ANALYSIS] Analyzing data flows and dependencies...');
-
-    const prompt = `
-    Analyze these API endpoints and identify data flows and dependencies:
-    
-    Endpoints:
-    ${endpoints.map((e) => `${e.method} ${e.path} (params: ${e.parameters.map((p) => p.name).join(', ')})`).join('\n')}
-    
-    Schemas:
-    ${schemas.map((s) => `${s.name}: ${Object.keys(s.properties).join(', ')}`).join('\n')}
-    
-    Identify:
-    1. Data flows: Which endpoints pass data to others
-    2. Dependencies: Which endpoints depend on others for data or state
-    3. User workflows: Common sequences of API calls
-    
-    Focus on User Management API patterns like:
-    - CREATE user → affects GET users
-    - UPDATE user → requires existing user
-    - DELETE user → affects dependent resources
-    
-    Return JSON with dataFlow and dependencies arrays.
-    `;
-
-    try {
-      const response = await this.model.invoke(prompt);
-      const analysis = this.parseAIResponse(response.content as string);
-
-      return {
-        dataFlow: analysis.dataFlow || [],
-        dependencies: analysis.dependencies || [],
-      };
-    } catch (error) {
-      console.log('⚠️ [AI FLOW ANALYSIS] Using fallback analysis');
-      return this.fallbackFlowAnalysis(endpoints);
+  private deepDerefSchema(schema: any): any {
+    if (!schema || typeof schema !== 'object') return schema;
+    if (schema.$ref) {
+      const resolved = this.resolveSchemaRef(schema.$ref);
+      return this.deepDerefSchema(resolved);
     }
-  }
-
-  /* removed: legacy findRelatedEndpoints */
-  private async findRelatedEndpoints(
-    pathTemplate: string,
-    method: string,
-    parameters: ParameterInfo[],
-    apiSpec: OpenAPIV3.Document,
-  ): Promise<string[]> {
-    const related: string[] = [];
-
-    // Find endpoints with shared path parameters
-    const pathParams = parameters.filter((p) => pathTemplate.includes(`{${p.name}}`));
-
-    if (apiSpec.paths) {
-      for (const [otherPath, pathItem] of Object.entries(apiSpec.paths)) {
-        if (otherPath === pathTemplate) continue;
-
-        // Check for shared parameters
-        const hasSharedParams = pathParams.some((param) => otherPath.includes(`{${param.name}}`));
-
-        if (hasSharedParams) {
-          Object.keys(pathItem || {}).forEach((otherMethod) => {
-            if (typeof pathItem![otherMethod as keyof typeof pathItem] === 'object') {
-              related.push(`${otherMethod.toUpperCase()} ${otherPath}`);
-            }
-          });
-        }
+    if (schema.type === 'array' && schema.items) {
+      return { ...schema, items: this.deepDerefSchema(schema.items) };
+    }
+    if (schema.properties) {
+      const props: Record<string, any> = {};
+      for (const [k, v] of Object.entries(schema.properties)) {
+        props[k] = this.deepDerefSchema(v);
       }
+      return { ...schema, properties: props };
     }
-
-    return related;
+    return { ...schema };
   }
 
-  /* removed: legacy generateValidParameterValues */
-  private async generateValidParameterValues(param: any, pathTemplate: string): Promise<any[]> {
-    // AI-powered parameter value generation based on context
-    if (param.name === 'id' && pathTemplate.includes('/users/')) {
-      return [1, 2, 3]; // Valid user IDs based on demo data
-    }
-
-    if (param.name === 'department') {
-      return ['Engineering', 'Marketing', 'Sales', 'HR'];
-    }
-
-    if (param.schema?.enum) {
-      return param.schema.enum;
-    }
-
-    return [];
-  }
-
-  /* removed: legacy generateSchemaExamples */
-  private async generateSchemaExamples(schemaName: string, schema: any): Promise<any[]> {
-    const examples: any[] = [];
-
-    if (schemaName.toLowerCase().includes('user')) {
-      examples.push({
-        id: 1,
-        name: 'John Doe',
-        email: 'john.doe@example.com',
-        age: 30,
-        department: 'Engineering',
-      });
-
-      examples.push({
-        id: 2,
-        name: 'Jane Smith',
-        email: 'jane.smith@example.com',
-        age: 28,
-        department: 'Marketing',
-      });
-    }
-
-    return examples;
-  }
-
-  /* removed: legacy parseAIResponse */
-  private parseAIResponse(content: string): any {
-    try {
-      // Extract JSON from AI response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-    } catch (error) {
-      console.log('⚠️ [AI PARSE] Could not parse AI response');
-    }
-
-    return { dataFlow: [], dependencies: [] };
-  }
-
-  /* removed: legacy fallbackFlowAnalysis */
-  private fallbackFlowAnalysis(endpoints: EndpointInfo[]): {
-    dataFlow: DataFlowInfo[];
-    dependencies: DependencyInfo[];
-  } {
-    const dataFlow: DataFlowInfo[] = [];
-    const dependencies: DependencyInfo[] = [];
-
-    // Basic heuristic analysis for User API
-    for (const endpoint of endpoints) {
-      if (endpoint.method === 'POST' && endpoint.path.includes('/users')) {
-        dependencies.push({
-          endpoint: `${endpoint.method} ${endpoint.path}`,
-          dependsOn: [],
-          affects: ['GET /api/v1/users', 'GET /api/v1/users/{id}'],
-          type: 'data',
-        });
-      }
-
-      if (endpoint.method === 'DELETE' && endpoint.path.includes('/users/{id}')) {
-        dependencies.push({
-          endpoint: `${endpoint.method} ${endpoint.path}`,
-          dependsOn: ['GET /api/v1/users/{id}'],
-          affects: ['GET /api/v1/users'],
-          type: 'data',
-        });
-      }
-    }
-
-    return { dataFlow, dependencies };
-  }
-
-  private async generateTestScenariosForEndpoint(
-    endpoint: EndpointInfo,
-    systemMap: SystemMap,
-  ): Promise<TestScenario[]> {
-    console.log(
-      `🧠 [AI SCENARIO GENERATION] Generating intelligent scenarios for ${endpoint.method} ${endpoint.path}`,
-    );
-
-    const scenarios: TestScenario[] = [];
-
-    // Generate functional test scenarios
-    const functionalScenarios = await this.generateFunctionalScenarios(endpoint, systemMap);
-    scenarios.push(...functionalScenarios);
-
-    // Generate security test scenarios
-    const securityScenarios = await this.generateSecurityScenarios(endpoint, systemMap);
-    scenarios.push(...securityScenarios);
-
-    // Generate boundary test scenarios
-    const boundaryScenarios = await this.generateBoundaryScenarios(endpoint, systemMap);
-    scenarios.push(...boundaryScenarios);
-
-    // Generate error handling scenarios
-    const errorScenarios = await this.generateErrorScenarios(endpoint, systemMap);
-    scenarios.push(...errorScenarios);
-
-    // Generate integration scenarios for cross-endpoint workflows
-    const integrationScenarios = await this.generateIntegrationScenarios(endpoint, systemMap);
-    scenarios.push(...integrationScenarios);
-
-    console.log(
-      `🧠 [AI SCENARIO GENERATION] Generated ${scenarios.length} scenarios for ${endpoint.method} ${endpoint.path}`,
-    );
-    return scenarios;
-  }
-
-  private async generateFunctionalScenarios(
-    endpoint: EndpointInfo,
-    systemMap: SystemMap,
-  ): Promise<TestScenario[]> {
-    const scenarios: TestScenario[] = [];
-
-    if (endpoint.method === 'GET' && endpoint.path.includes('/users')) {
-      if (endpoint.path.includes('{id}')) {
-        // GET specific user
-        scenarios.push({
-          id: `functional_get_user_${Date.now()}`,
-          type: 'functional',
-          endpoint: endpoint.path,
-          method: endpoint.method,
-          description: 'Retrieve existing user successfully',
-          intent: 'Verify that a valid user ID returns the correct user data',
-          testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
-          expectedOutcome: {
-            statusCode: 200,
-            schema: endpoint.responses.find((r) => r.statusCode === 200)?.schema,
-          },
-          dependencies: [],
-        });
-      } else {
-        // GET all users
-        scenarios.push({
-          id: `functional_get_users_${Date.now()}`,
-          type: 'functional',
-          endpoint: endpoint.path,
-          method: endpoint.method,
-          description: 'Retrieve all users successfully',
-          intent: 'Verify that the users list endpoint returns all available users',
-          testData: {},
-          expectedOutcome: {
-            statusCode: 200,
-            schema: endpoint.responses.find((r) => r.statusCode === 200)?.schema,
-          },
-          dependencies: [],
-        });
-      }
-    }
-
-    if (endpoint.method === 'POST' && endpoint.path.includes('/users')) {
-      scenarios.push({
-        id: `functional_create_user_${Date.now()}`,
-        type: 'functional',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Create new user successfully',
-        intent: 'Verify that a valid user object creates a new user and returns success',
-        testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
-        expectedOutcome: {
-          statusCode: 201,
-          schema: endpoint.responses.find((r) => r.statusCode === 201)?.schema,
-        },
-        dependencies: [],
-      });
-
-      // Add email uniqueness validation scenario
-      scenarios.push({
-        id: `functional_duplicate_email_${Date.now()}`,
-        type: 'functional',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Reject duplicate email registration',
-        intent: 'Verify that the system prevents duplicate email addresses',
-        testData: await this.generateValidTestData(endpoint, 'duplicate_email', systemMap),
-        expectedOutcome: {
-          statusCode: 400,
-          errorType: 'validation',
-        },
-        dependencies: [],
-      });
-
-      // Add department validation scenario
-      scenarios.push({
-        id: `functional_invalid_department_${Date.now()}`,
-        type: 'functional',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Reject invalid department in user creation',
-        intent: 'Verify that the system validates department values',
-        testData: await this.generateValidTestData(endpoint, 'invalid_department', systemMap),
-        expectedOutcome: {
-          statusCode: 400,
-          errorType: 'validation',
-        },
-        dependencies: [],
-      });
-    }
-
-    if (endpoint.method === 'PUT' && endpoint.path.includes('/users/{id}')) {
-      scenarios.push({
-        id: `functional_update_user_${Date.now()}`,
-        type: 'functional',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Update existing user successfully',
-        intent: 'Verify that valid user data updates an existing user correctly',
-        testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
-        expectedOutcome: {
-          statusCode: 200,
-          schema: endpoint.responses.find((r) => r.statusCode === 200)?.schema,
-        },
-        dependencies: ['GET /api/v1/users/{id}'], // Requires user to exist
-      });
-    }
-
-    if (endpoint.method === 'DELETE' && endpoint.path.includes('/users/{id}')) {
-      scenarios.push({
-        id: `functional_delete_user_${Date.now()}`,
-        type: 'functional',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Delete existing user successfully',
-        intent: 'Verify that a valid user ID deletes the user and returns success',
-        testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
-        expectedOutcome: {
-          statusCode: 204,
-          schema: endpoint.responses.find((r) => r.statusCode === 204)?.schema,
-        },
-        dependencies: ['GET /api/v1/users/{id}'], // Requires user to exist
-      });
-    }
-
-    return scenarios;
-  }
-
-  private async generateSecurityScenarios(
-    endpoint: EndpointInfo,
-    systemMap: SystemMap,
-  ): Promise<TestScenario[]> {
-    console.log(
-      `🔒 [SECURITY GEN] Generating security scenarios for ${endpoint.method} ${endpoint.path}`,
-    );
-    const scenarios: TestScenario[] = [];
-
-    // Security test: Check if endpoint accepts valid requests (for demo API without auth)
-    if (endpoint.method !== 'GET') {
-      // Determine expected status code based on HTTP method
-      let expectedStatusCode = 200;
-      if (endpoint.method === 'POST') {
-        expectedStatusCode = 201; // Created
-      } else if (endpoint.method === 'DELETE') {
-        expectedStatusCode = 204; // No Content
-      } else if (endpoint.method === 'PUT' || endpoint.method === 'PATCH') {
-        expectedStatusCode = 200; // OK
-      }
-
-      // Use VALID test data for security tests (testing open access, not vulnerabilities)
-      const validTestData = await this.generateValidTestData(endpoint, 'valid', systemMap);
-      console.log(
-        `🔒 [SECURITY GEN] Generated valid test data for ${endpoint.method}:`,
-        validTestData,
-      );
-
-      scenarios.push({
-        id: `security_valid_access_${endpoint.method.toLowerCase()}_${Date.now()}`,
-        type: 'security',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: `Security test: ${endpoint.method} operation with valid data`,
-        intent: 'Verify that valid requests are accepted (demo API has open access)',
-        testData: validTestData,
-        expectedOutcome: {
-          statusCode: expectedStatusCode,
-          errorType: 'none',
-        },
-        dependencies: [],
-      });
-    }
-
-    // Security test: Check resource access with valid ID
-    if (endpoint.path.includes('{id}')) {
-      // Determine expected status code for resource access
-      let expectedStatusCode = 200;
-      if (endpoint.method === 'DELETE') {
-        expectedStatusCode = 204; // No Content for DELETE
-      } else if (endpoint.method === 'POST') {
-        expectedStatusCode = 201; // Created for POST
-      }
-
-      // Use valid test data with existing ID
-      const validTestData = await this.generateValidTestData(endpoint, 'valid', systemMap);
-      console.log(
-        `🔒 [SECURITY GEN] Generated valid ID test data for ${endpoint.method}:`,
-        validTestData,
-      );
-
-      scenarios.push({
-        id: `security_valid_id_access_${Date.now()}`,
-        type: 'security',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Security test: Resource access with valid ID',
-        intent: 'Verify that valid ID access works (demo API allows open access)',
-        testData: validTestData,
-        expectedOutcome: {
-          statusCode: expectedStatusCode,
-          errorType: 'none',
-        },
-        dependencies: [],
-      });
-    }
-
-    console.log(`🔒 [SECURITY GEN] Generated ${scenarios.length} security scenarios`);
-    return scenarios;
-  }
-
-  private async generateBoundaryScenarios(
-    endpoint: EndpointInfo,
-    systemMap: SystemMap,
-  ): Promise<TestScenario[]> {
-    const scenarios: TestScenario[] = [];
-
-    if (endpoint.requestBody) {
-      scenarios.push({
-        id: `boundary_max_length_${Date.now()}`,
-        type: 'boundary',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Test with maximum allowed input length',
-        intent: 'Verify that the system handles maximum length inputs correctly',
-        testData: await this.generateValidTestData(endpoint, 'max_length', systemMap),
-        expectedOutcome: {
-          statusCode: 200,
-          schema: endpoint.responses.find((r) => r.statusCode === 200)?.schema,
-        },
-        dependencies: [],
-      });
-
-      scenarios.push({
-        id: `boundary_min_length_${Date.now()}`,
-        type: 'boundary',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Test with minimum allowed input length',
-        intent: 'Verify that the system handles minimum length inputs correctly',
-        testData: await this.generateValidTestData(endpoint, 'min_length', systemMap),
-        expectedOutcome: {
-          statusCode: 200,
-          schema: endpoint.responses.find((r) => r.statusCode === 200)?.schema,
-        },
-        dependencies: [],
-      });
-    }
-
-    if (endpoint.parameters.some((p) => p.type === 'integer')) {
-      scenarios.push({
-        id: `boundary_numeric_limits_${Date.now()}`,
-        type: 'boundary',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Test with numeric boundary values',
-        intent: 'Verify that the system handles numeric edge cases correctly',
-        testData: await this.generateValidTestData(endpoint, 'numeric_boundary', systemMap),
-        expectedOutcome: {
-          // If this is a DELETE on an id path, expect 404 for out-of-range/non-existent values
-          statusCode:
-            endpoint.method === 'DELETE' && endpoint.path.includes('{id}') ? 404 : 200,
-          schema: endpoint.responses.find((r) => r.statusCode === 200)?.schema,
-        },
-        dependencies: [],
-      });
-    }
-
-    return scenarios;
-  }
-
-  private async generateErrorScenarios(
-    endpoint: EndpointInfo,
-    systemMap: SystemMap,
-  ): Promise<TestScenario[]> {
-    const scenarios: TestScenario[] = [];
-
-    if (endpoint.path.includes('{id}')) {
-      scenarios.push({
-        id: `error_not_found_${Date.now()}`,
-        type: 'error',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Attempt to access non-existent resource',
-        intent: 'Verify that non-existent resources return proper 404 error',
-        testData: await this.generateValidTestData(endpoint, 'not_found', systemMap),
-        expectedOutcome: {
-          statusCode: 404,
-          errorType: 'not_found',
-        },
-        dependencies: [],
-      });
-
-      scenarios.push({
-        id: `error_invalid_id_format_${Date.now()}`,
-        type: 'error',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Attempt with invalid ID format',
-        intent: 'Verify that invalid ID formats are properly rejected',
-        testData: await this.generateValidTestData(endpoint, 'invalid_format', systemMap),
-        expectedOutcome: {
-          statusCode: 400,
-          errorType: 'validation',
-        },
-        dependencies: [],
-      });
-    }
-
-    if (endpoint.requestBody) {
-      scenarios.push({
-        id: `error_invalid_data_${Date.now()}`,
-        type: 'error',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Attempt with invalid request data',
-        intent: 'Verify that invalid request data is properly rejected with validation errors',
-        testData: await this.generateValidTestData(endpoint, 'invalid', systemMap),
-        expectedOutcome: {
-          statusCode: 400,
-          errorType: 'validation',
-        },
-        dependencies: [],
-      });
-
-      scenarios.push({
-        id: `error_missing_required_fields_${Date.now()}`,
-        type: 'error',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Attempt with missing required fields',
-        intent: 'Verify that missing required fields are properly rejected',
-        testData: await this.generateValidTestData(endpoint, 'missing_required', systemMap),
-        expectedOutcome: {
-          statusCode: 400,
-          errorType: 'validation',
-        },
-        dependencies: [],
-      });
-    }
-
-    return scenarios;
-  }
-
-  private async generateIntegrationScenarios(
-    endpoint: EndpointInfo,
-    systemMap: SystemMap,
-  ): Promise<TestScenario[]> {
-    const scenarios: TestScenario[] = [];
-
-    // Only generate integration scenarios for key endpoints to avoid duplication
-    if (endpoint.method === 'POST' && endpoint.path.includes('/users')) {
-      // User lifecycle workflow: Create → Read → Update → Delete
-      scenarios.push({
-        id: `integration_user_lifecycle_${Date.now()}`,
-        type: 'integration',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Complete user lifecycle workflow',
-        intent: 'Verify that a user can be created, retrieved, updated, and deleted in sequence',
-        testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
-        expectedOutcome: {
-          statusCode: 201,
-          schema: endpoint.responses.find((r) => r.statusCode === 201)?.schema,
-        },
-        dependencies: [],
-      });
-
-      // Department integration: Create user → Verify in department listing
-      scenarios.push({
-        id: `integration_department_listing_${Date.now()}`,
-        type: 'integration',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'User creation affects department listing',
-        intent: 'Verify that creating a user updates the department user list',
-        testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
-        expectedOutcome: {
-          statusCode: 201,
-          schema: endpoint.responses.find((r) => r.statusCode === 201)?.schema,
-        },
-        dependencies: ['GET /api/v1/users/department/{department}'],
-      });
-    }
-
-    if (endpoint.method === 'PUT' && endpoint.path.includes('/users/{id}')) {
-      // Update workflow: Check existence → Update → Verify changes
-      scenarios.push({
-        id: `integration_update_verification_${Date.now()}`,
-        type: 'integration',
-        endpoint: endpoint.path,
-        method: endpoint.method,
-        description: 'Update user and verify changes persist',
-        intent: 'Verify that user updates are properly saved and retrievable',
-        testData: await this.generateValidTestData(endpoint, 'valid', systemMap),
-        expectedOutcome: {
-          statusCode: 200,
-          schema: endpoint.responses.find((r) => r.statusCode === 200)?.schema,
-        },
-        dependencies: ['GET /api/v1/users/{id}'],
-      });
-    }
-
-    return scenarios;
-  }
-
-  private async generateValidTestData(
-    endpoint: EndpointInfo,
-    dataType:
-      | 'valid'
-      | 'invalid'
-      | 'unauthorized'
-      | 'forbidden'
-      | 'not_found'
-      | 'invalid_format'
-      | 'max_length'
-      | 'min_length'
-      | 'numeric_boundary'
-      | 'missing_required'
-      | 'duplicate_email'
-      | 'invalid_department',
-    systemMap: SystemMap,
-  ): Promise<any> {
-    console.log(
-      `📊 [TEST DATA] Generating ${dataType} data for ${endpoint.method} ${endpoint.path}`,
-    );
-
-    try {
-      // Derive lightweight validation hints from code context if available
-      let validation: any = undefined;
-      try {
-        if (this.codeRoot) {
-          const cached = (this as any)._codeIndex;
-          const index = cached || await buildCodeIndex(this.codeRoot);
-          if (!cached) (this as any)._codeIndex = index;
-          // Attempt to use requestBody name as a hint source when present
-          const dtoName = (endpoint.requestBody as any)?.name;
-          validation = getValidationContext(index, dtoName);
-        }
-      } catch (e) {
-        console.log('⚠️ [TEST DATA] Failed to derive validation context, proceeding without it');
-      }
-
-      // Use the enhanced, schema-driven test data manager
-      const testData = await this.testDataManager.generateTestData(endpoint, dataType, systemMap, validation);
-      console.log(`📊 [TEST DATA] Generated data from manager:`, testData);
-      return testData;
-    } catch (error) {
-      console.log(`📊 [TEST DATA] Manager failed, using fallback generation`);
-      // Fallback: Generate simple valid test data
-      return this.generateFallbackTestData(endpoint, dataType);
-    }
-  }
-
-  private generateFallbackTestData(endpoint: EndpointInfo, dataType: string): any {
-    const testData: any = {};
-
-    // Handle path parameters (use valid IDs for security tests)
-    if (endpoint.path.includes('{id}')) {
-      if (dataType === 'valid' || dataType === 'unauthorized' || dataType === 'forbidden') {
-        testData.id = 1; // Use existing ID
-      } else if (dataType === 'not_found') {
-        testData.id = 999; // Non-existent ID
-      } else if (dataType === 'invalid_format') {
-        testData.id = 'invalid_id_format';
-      } else {
-        testData.id = Math.floor(Math.random() * 1000) + 100;
-      }
-    }
-
-    // Handle request body for POST/PUT
-    if (endpoint.method === 'POST' || endpoint.method === 'PUT') {
-      if (dataType === 'valid' || dataType === 'unauthorized' || dataType === 'forbidden') {
-        // Valid user data
-        testData.name = 'Test User';
-        testData.email = `test${Date.now()}@example.com`;
-        testData.age = 25;
-        testData.department = 'Engineering';
-      } else if (dataType === 'invalid') {
-        // Invalid data
-        testData.name = '';
-        testData.email = 'invalid-email';
-        testData.age = 17; // Below minimum
-        testData.department = 'InvalidDept';
-      } else if (dataType === 'missing_required') {
-        // Missing required fields
-        testData.age = 30;
-        testData.department = 'Sales';
-        // Missing name and email
-      }
-    }
-
-    console.log(`📊 [TEST DATA] Fallback generated:`, testData);
-    return testData;
-  }
-
-  private async executeTestScenario(
-    scenario: TestScenario,
-    systemMap: SystemMap,
-  ): Promise<TestResult> {
-    console.log(`🔥 [SMART EXECUTION] Executing: ${scenario.description}`);
-    const startTime = Date.now();
-
-    try {
-      // Import the existing cURL runner
-      const { CurlRunner } = await import('../runners/curlRunner');
-      const curlRunner = new CurlRunner();
-
-      // Create intelligent test case using our contextual understanding
-      const intelligentTestCase = this.createIntelligentTestCase(scenario, systemMap);
-
-      // Dynamically extract base URL from system map
-    // Allow overrides via env and CLI flag (SPECTRA_BASE_URL is set by CLI when --base-url is passed)
-    const baseUrl = process.env.SPECTRA_BASE_URL || this.extractBaseUrlFromSystemMap(systemMap);
-      console.log(`🌐 [SMART EXECUTION] Using dynamic base URL: ${baseUrl}`);
-      curlRunner.setBaseUrl(baseUrl);
-      let result = await curlRunner.executeTest(intelligentTestCase);
-
-      // Self-heal loop
-      if (!result.success && this.selfHeal) {
-        for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
-          console.log(`🛠️ [SELF-HEAL] Attempt ${attempt}/${this.maxRetries}`);
-          try {
-            const refKey = `${scenario.method} ${scenario.endpoint}`;
-            const codeRef = systemMap.codeRefs?.[refKey];
-            const ctxSummary = summarizeForLLM({ codeRef, response: result.response }, this.contextDepth);
-            const fixPrompt = `Given the API request failed, suggest a minimal JSON delta to adjust headers or request fields to likely satisfy validation/auth based on code hints. Respond with only JSON { headers?: object, request?: object }.
-Context:\n${ctxSummary}\nOriginal:${JSON.stringify(intelligentTestCase, null, 2)}`;
-            const fixResp = await this.model.invoke(fixPrompt);
-            const fix = this.parseAIResponse((fixResp.content as string) || '{}') || {};
-            if (fix.headers && typeof fix.headers === 'object') {
-              intelligentTestCase.headers = { ...(intelligentTestCase.headers || {}), ...fix.headers };
-            }
-            if (fix.request && typeof fix.request === 'object') {
-              intelligentTestCase.request = { ...(intelligentTestCase.request || {}), ...fix.request };
-            }
-            result = await curlRunner.executeTest(intelligentTestCase);
-            if (result.success) break;
-          } catch (e) {
-            console.log('⚠️ [SELF-HEAL] Failed to heal:', e);
-          }
-        }
-      }
-
-      // Analyze result with AI-powered insights
-      const insights = await this.analyzeTestExecution(scenario, result, systemMap);
-
-      const success = this.evaluateTestSuccess(scenario, result, insights, systemMap);
-      const duration = Date.now() - startTime;
-
-      console.log(
-        `🔥 [SMART EXECUTION] ${scenario.description}: ${success ? 'PASS' : 'FAIL'} (${duration}ms)`,
-      );
-
-      return {
-        scenarioId: scenario.id,
-        success,
-        actualStatusCode: result.response?.status || 0,
-        expectedStatusCode: scenario.expectedOutcome.statusCode,
-        response: result.response,
-        duration,
-        errors: result.error ? [result.error] : [],
-        insights,
-      };
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      console.log(`🔥 [SMART EXECUTION] ${scenario.description}: ERROR (${duration}ms)`);
-      console.error('Execution error:', error);
-
-      return {
-        scenarioId: scenario.id,
-        success: false,
-        actualStatusCode: 0,
-        expectedStatusCode: scenario.expectedOutcome.statusCode,
-        response: null,
-        duration,
-        errors: [error instanceof Error ? error.message : 'Unknown execution error'],
-        insights: ['Test execution failed due to internal error'],
-      };
-    }
-  }
-
-  private createIntelligentTestCase(scenario: TestScenario, systemMap: SystemMap): any {
-    const intelligentRequest = this.buildIntelligentRequest(scenario, systemMap);
-
-    // Handle path parameter substitution for URL
-    let endpoint = scenario.endpoint;
-    if (intelligentRequest._pathParams) {
-      // Substitute path parameters in the endpoint URL
-      for (const [key, value] of Object.entries(intelligentRequest._pathParams)) {
-        endpoint = endpoint.replace(`{${key}}`, String(value));
-      }
-      // Remove path params from request object as they're now in the URL
-      delete intelligentRequest._pathParams;
-    }
-
-    // Create a properly formatted test case for the cURL runner
-    // Resolve/dereference schemas from OpenAPI if present (handles nested refs and arrays)
-    let resolvedSchema = scenario.expectedOutcome.schema;
-    if (resolvedSchema && typeof resolvedSchema === 'object') {
-      resolvedSchema = this.deepDerefSchema(resolvedSchema);
-    }
-
-    const testCase: any = {
-      id: scenario.id,
-      name: scenario.description,
-      endpoint: endpoint,
-      method: scenario.method.toLowerCase(),
-      request: Object.keys(intelligentRequest).length > 0 ? intelligentRequest : undefined,
-      expectedResponse: {
-        status: this.deriveAllowedStatuses(scenario, systemMap),
-        schema: resolvedSchema,
-      },
-    };
-
-    console.log(`🧠 [INTELLIGENT TEST CASE] Created for ${scenario.description}:`, {
-      endpoint: testCase.endpoint,
-      method: testCase.method,
-      hasRequestData: !!testCase.request,
-      expectedStatus: testCase.expectedResponse ? testCase.expectedResponse.status : undefined,
-      requestKeys: testCase.request ? Object.keys(testCase.request) : [],
-    });
-
-    return testCase;
-  }
-
-  // Derive allowed statuses from spec and scenario intent with safe fallbacks
-  private deriveAllowedStatuses(scenario: TestScenario, systemMap: SystemMap): number | number[] {
-    const primary = scenario.expectedOutcome?.statusCode;
-    const method = scenario.method.toUpperCase();
-
-    // Collect advertised 2xx for this endpoint from system map if available
-    const ep = systemMap.endpoints.find((e) => e.path === scenario.endpoint && e.method === method);
-    const advertised2xx = ep
-      ? ep.responses
-          .map((r) => (typeof r.statusCode === 'number' ? r.statusCode : parseInt(String(r.statusCode), 10)))
-          .filter((code) => code >= 200 && code < 300)
-      : [];
-
-    // If scenario is error-type, keep strict expected code
-    if (scenario.type === 'error') return primary ?? 400;
-
-    // For functional and security: allow common alternates if spec isn't explicit
-    const commonByMethod: Record<string, number[]> = {
-      POST: [201, 200],
-      PUT: [200, 204],
-      PATCH: [200, 204],
-      DELETE: [204, 200],
-      GET: [200],
-    };
-
-    const commons = commonByMethod[method] || [200];
-    const allowed = new Set<number>();
-    if (primary) allowed.add(primary);
-    commons.forEach((c) => allowed.add(c));
-    advertised2xx.forEach((c) => allowed.add(c));
-
-    return Array.from(allowed);
-  }
-
-  // Resolve simple local component refs (e.g., "#/components/schemas/User")
   private resolveSchemaRef(ref: string): any | undefined {
     try {
-      if (!ref || !this.currentApiSpec) return undefined;
-      const match = ref.match(/^#\/(components)\/schemas\/([^\s#]+)$/);
+      const match = ref.match(/#\/components\/schemas\/([^\/#]+)/);
       if (!match) return undefined;
-      const schemaName = decodeURIComponent(match[2]);
-      const schema = (this.currentApiSpec.components?.schemas || ({} as Record<string, any>))[schemaName];
+      const schemaName = decodeURIComponent(match[1]);
+      const schema = (this.currentApiSpec?.components?.schemas || ({} as Record<string, any>))[
+        schemaName
+      ];
       return schema ? JSON.parse(JSON.stringify(schema)) : undefined;
     } catch {
       return undefined;
     }
-  }
-
-  // Recursively dereference $ref and items.$ref within a schema using the loaded OpenAPI spec
-  private deepDerefSchema(schema: any, depth: number = 0): any {
-    if (!schema || typeof schema !== 'object' || depth > 10) return schema;
-
-    // If this node is a $ref, replace with the referenced schema and continue
-    if (schema.$ref && typeof schema.$ref === 'string') {
-      const resolved = this.resolveSchemaRef(schema.$ref);
-      if (resolved) {
-        return this.deepDerefSchema(resolved, depth + 1);
-      }
-      return schema; // fallback
-    }
-
-    const clone: any = Array.isArray(schema) ? [] : { ...schema };
-
-    // Handle array items
-    if (clone.type === 'array' && clone.items) {
-      clone.items = this.deepDerefSchema(clone.items, depth + 1);
-    }
-
-    // Handle object properties and additionalProperties
-    if (clone.type === 'object' && clone.properties && typeof clone.properties === 'object') {
-      const newProps: Record<string, any> = {};
-      for (const [k, v] of Object.entries(clone.properties)) {
-        newProps[k] = this.deepDerefSchema(v, depth + 1);
-      }
-      clone.properties = newProps;
-    }
-
-    if (clone.additionalProperties && typeof clone.additionalProperties === 'object') {
-      clone.additionalProperties = this.deepDerefSchema(clone.additionalProperties, depth + 1);
-    }
-
-    // Recurse other common containers
-    for (const key of ['allOf', 'anyOf', 'oneOf']) {
-      if (Array.isArray(clone[key])) {
-        clone[key] = clone[key].map((s: any) => this.deepDerefSchema(s, depth + 1));
-      }
-    }
-
-    return clone;
-  }
-
-  private buildIntelligentRequest(scenario: TestScenario, systemMap: SystemMap): any {
-    console.log(
-      `🔧 [REQUEST BUILD] Building request for ${scenario.type} test: ${scenario.description}`,
-    );
-    console.log(`🔧 [REQUEST BUILD] Input test data:`, JSON.stringify(scenario.testData, null, 2));
-
-    const testData = scenario.testData;
-
-    // Handle path parameters intelligently
-    const pathParams: any = {};
-    const requestBody: any = {};
-
-    // Flatten and clean test data if it has nested structures
-    const flattenedData = this.flattenTestData(testData);
-    console.log(`🔧 [REQUEST BUILD] Flattened test data:`, flattenedData);
-
-    // Separate path parameters from body data
-    for (const [key, value] of Object.entries(flattenedData)) {
-      if (scenario.endpoint.includes(`{${key}}`)) {
-        pathParams[key] = value;
-        console.log(`🔧 [REQUEST BUILD] Added path param: ${key} = ${value}`);
-      } else {
-        // Only include valid schema fields in request body
-        if (key !== 'requestBody' && key !== 'pathParams' && key !== 'body') {
-          requestBody[key] = value;
-          console.log(`🔧 [REQUEST BUILD] Added body field: ${key} = ${value}`);
-        }
-      }
-    }
-
-    // Build the request object in the format expected by cURL runner
-    const request: any = {};
-
-    // For POST/PUT operations, add request body directly (not wrapped in 'body')
-    if (
-      (scenario.method === 'POST' || scenario.method === 'PUT') &&
-      Object.keys(requestBody).length > 0
-    ) {
-      // Add request body fields directly to request object
-      Object.assign(request, requestBody);
-      console.log(`🔧 [REQUEST BUILD] Added request body for ${scenario.method}:`, requestBody);
-    }
-
-    // Add path parameters for URL substitution
-    if (Object.keys(pathParams).length > 0) {
-      // Store path params for URL substitution (not as request body)
-      request._pathParams = pathParams;
-      console.log(`🔧 [REQUEST BUILD] Added path params:`, pathParams);
-    }
-
-    console.log(`🔧 [REQUEST BUILD] Final request object:`, request);
-    return request;
-  }
-
-  // Helper method to flatten complex test data structures
-  private flattenTestData(data: any): any {
-    // If data has a 'body' property, extract it
-    if (data && typeof data === 'object' && data.body) {
-      console.log(`🔧 [FLATTEN] Found 'body' property, extracting:`, data.body);
-      return { ...data.body, ...data }; // Merge body fields with top-level fields, preferring body
-    }
-
-    // If data has nested objects, flatten them
-    const flattened: any = {};
-    for (const [key, value] of Object.entries(data || {})) {
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        // If it's a nested object, flatten it
-        console.log(`🔧 [FLATTEN] Flattening nested object for key: ${key}`);
-        Object.assign(flattened, value);
-      } else {
-        // Regular primitive value
-        flattened[key] = value;
-      }
-    }
-
-    return flattened;
   }
 
   private async analyzeTestExecution(
@@ -1499,89 +608,40 @@ Context:\n${ctxSummary}\nOriginal:${JSON.stringify(intelligentTestCase, null, 2)
     result: any,
     systemMap: SystemMap,
   ): Promise<string[]> {
+    // Keep simple for LLM-only: record mismatch insights
     const insights: string[] = [];
-
-    // Analyze status code patterns
-    if (result.response?.status === 404 && scenario.type === 'functional') {
-      insights.push('Resource not found - may indicate data dependency issue or incorrect ID');
+    if (!result.success) {
+      insights.push(`Expected ${scenario.expectedOutcome.statusCode}, got ${result.response?.status}`);
     }
-
-    if (result.response?.status === 400 && scenario.type === 'functional') {
-      insights.push('Bad request - likely validation error or malformed request data');
-    }
-
-    if (result.response?.status === 200 && scenario.expectedOutcome.statusCode !== 200) {
-      insights.push('Unexpected success - security or validation controls may be insufficient');
-    }
-
-    // Analyze response patterns
-    if (result.response && typeof result.response === 'object') {
-      if (result.response.error && result.response.error.includes('Bad Request')) {
-        insights.push(
-          'Server validation rejected request - check request format and required fields',
-        );
-      }
-    }
-
-    // Context-aware insights based on endpoint
-    if (scenario.endpoint.includes('/users/{id}') && result.response?.status === 404) {
-      insights.push('User ID not found - ensure test data includes existing user IDs (1, 2, 3)');
-    }
-
-    // Dependency analysis
-    if (scenario.dependencies.length > 0 && !result.success) {
-      insights.push(
-        `Test depends on: ${scenario.dependencies.join(', ')} - verify dependencies are met`,
-      );
-    }
-
     return insights;
   }
 
-  private evaluateTestSuccess(scenario: TestScenario, result: any, insights: string[], systemMap: SystemMap): boolean {
+  private evaluateTestSuccess(
+    scenario: TestScenario,
+    result: any,
+    insights: string[],
+    systemMap: SystemMap,
+  ): boolean {
     // Primary success criteria: status code match (supports multiple allowed statuses)
-    const allowed = this.deriveAllowedStatuses(scenario, systemMap);
+    const allowed = this.getAllowedStatuses(scenario, systemMap);
     const allowedArray: number[] = Array.isArray(allowed) ? allowed : [allowed];
-    const statusMatch = allowedArray.includes(result.response?.status);
+    return allowedArray.includes(result.response?.status || 0);
+  }
 
-    console.log(`🎯 [TEST EVAL] Evaluating ${scenario.type} test "${scenario.description}"`);
-    console.log(
-      `🎯 [TEST EVAL] Expected: ${scenario.expectedOutcome.statusCode}, Got: ${result.response?.status}, Match: ${statusMatch}`,
+  private getAllowedStatuses(scenario: TestScenario, systemMap: SystemMap): number | number[] {
+    const primary = scenario.expectedOutcome?.statusCode;
+    if (Array.isArray(primary)) return primary;
+    if (typeof primary === 'number') return primary;
+    // fallback: find declared 2xx codes for this endpoint if available
+    const ep = systemMap.endpoints.find(
+      (e) => e.path === scenario.endpoint && e.method.toUpperCase() === scenario.method.toUpperCase(),
     );
-
-    // For error scenarios, we expect specific error status codes
-    if (scenario.type === 'error') {
-      console.log(`🎯 [TEST EVAL] Error test - returning status match: ${statusMatch}`);
-      return statusMatch;
-    }
-
-    // For security scenarios (testing open access), we expect successful responses
-    if (scenario.type === 'security') {
-      console.log(`🎯 [TEST EVAL] Security test - expecting success, status match: ${statusMatch}`);
-      return statusMatch;
-    }
-
-    // For functional scenarios, status must match and be successful
-    if (scenario.type === 'functional') {
-      const isSuccessful = result.response?.status >= 200 && result.response?.status < 300;
-      console.log(
-        `🎯 [TEST EVAL] Functional test - status match: ${statusMatch}, is successful: ${isSuccessful}`,
-      );
-      return statusMatch && isSuccessful;
-    }
-
-    // For boundary scenarios, evaluate based on intent
-    if (scenario.type === 'boundary') {
-      // Boundary tests might succeed or fail depending on implementation
-      const fallbackSuccess = result.response?.status >= 200 && result.response?.status < 500;
-      console.log(
-        `🎯 [TEST EVAL] Boundary test - status match: ${statusMatch}, fallback: ${fallbackSuccess}`,
-      );
-      return statusMatch || fallbackSuccess;
-    }
-
-    console.log(`🎯 [TEST EVAL] Default case - returning status match: ${statusMatch}`);
-    return statusMatch;
+    const advertised2xx = ep
+      ? ep.responses
+          .map((r) => (typeof r.statusCode === 'number' ? r.statusCode : parseInt(String(r.statusCode), 10)))
+          .filter((code) => code >= 200 && code < 300)
+      : [];
+    return advertised2xx.length ? advertised2xx : 200;
   }
 
   private async analyzeTestResults(
@@ -1948,8 +1008,8 @@ Context:\n${ctxSummary}\nOriginal:${JSON.stringify(intelligentTestCase, null, 2)
       summary: {
         totalScenarios: state.testScenarios.length,
         totalResults: state.testResults.length,
-        totalGherkinFeatures: state.gherkinFeatures.length,
-        totalGherkinScenarios: state.gherkinFeatures.reduce(
+        totalGherkinFeatures: (state.gherkinFeatures || []).length,
+        totalGherkinScenarios: (state.gherkinFeatures || []).reduce(
           (sum, f) => sum + f.scenarios.length,
           0,
         ),
@@ -1961,8 +1021,18 @@ Context:\n${ctxSummary}\nOriginal:${JSON.stringify(intelligentTestCase, null, 2)
       },
       systemMap: state.systemMap,
       testScenarios: state.testScenarios,
-      gherkinFeatures: state.gherkinFeatures,
-      gherkinSummary: state.gherkinSummary,
+      gherkinFeatures: state.gherkinFeatures || [],
+      gherkinSummary: state.gherkinSummary || {
+        totalFeatures: 0,
+        totalScenarios: 0,
+        featuresByDomain: {},
+        scenariosByType: {},
+        coverageMetrics: {
+          endpointsCovered: 0,
+          businessRulesCovered: 0,
+          errorScenariosCovered: 0,
+        },
+      },
       testResults: state.testResults,
       analysis: state.analysis,
       recommendations: state.recommendations,
@@ -3268,7 +2338,13 @@ ${
     const fs = await import('fs');
     const path = await import('path');
 
-    const instructions = this.testDataManager.generateTestDataSeedingInstructions();
+    // Minimal seeding guidance for LLM-only flow
+    const instructions = (
+      '# Test Data Seeding Instructions\n\n' +
+      'Spectra generates mock data via LLMs based on your OpenAPI schemas.\n' +
+      'To maximize accuracy, add examples/enums and validation constraints to your spec.\n\n' +
+      'If your API requires existing IDs, seed a couple of records so read/update/delete tests can pass.\n'
+    );
     const instructionsPath = path.join(outputDir, 'TEST_DATA_SETUP.md');
 
     fs.writeFileSync(instructionsPath, instructions);

@@ -30,8 +30,8 @@ export class LangGraphGherkinGenerator {
   async generateGherkinFeatures(state: TestingState): Promise<TestingState> {
     console.log('🥒 [GHERKIN GENERATOR] Generating comprehensive Gherkin features...');
 
-    if (!state.systemMap || !state.testScenarios.length) {
-      console.log('⚠️ [GHERKIN GENERATOR] No system map or test scenarios found');
+    if (!state.testScenarios.length) {
+      console.log('⚠️ [GHERKIN GENERATOR] No test scenarios found');
       return {
         ...state,
         gherkinFeatures: [],
@@ -51,37 +51,86 @@ export class LangGraphGherkinGenerator {
 
     const gherkinFeatures: GherkinFeature[] = [];
 
-    // Group test scenarios by endpoint for better feature organization
+    // 0) Try direct LLM features from spec
+    try {
+      const { AIService } = await import('../services/aiService');
+      const ai = new AIService();
+      const direct = await ai.generateGherkinFeaturesFromSpec(state.apiSpec as any, 20);
+      if (Array.isArray(direct) && direct.length > 0) {
+        console.log(`🥒 [GHERKIN GENERATOR] Using ${direct.length} features from direct LLM generation`);
+        const normalized: GherkinFeature[] = direct.map((f: any) => ({
+          title: String(f.title || 'API Feature'),
+          description: String(f.description || ''),
+          background: f.background,
+          scenarios: Array.isArray(f.scenarios) ? f.scenarios : [],
+          tags: Array.isArray(f.tags) ? f.tags : [],
+          endpointContext: f.endpointContext || { path: '/', method: 'GET', businessDomain: 'General API Operations' },
+        }));
+        const summary = this.generateGherkinSummary(normalized, state.testScenarios);
+        return {
+          ...state,
+          gherkinFeatures: normalized,
+          gherkinSummary: summary,
+          messages: [...state.messages, `Gherkin generated directly by LLM: ${normalized.length} features.`],
+        };
+      }
+    } catch (e) {
+      console.log('⚠️ [GHERKIN GENERATOR] Direct LLM feature generation failed, falling back:', e);
+    }
+
+    // 1) Group test scenarios by endpoint for better feature organization
     const scenariosByEndpoint = this.groupScenariosByEndpoint(state.testScenarios);
 
-    // Generate features for each endpoint
+    // 2) Generate features for each endpoint (fallback path)
     for (const [endpointKey, scenarios] of Object.entries(scenariosByEndpoint)) {
-      const endpoint = this.findEndpointInfo(endpointKey, state.systemMap);
-      if (!endpoint) continue;
+      const [method, path] = endpointKey.split(' ', 2);
+      let endpoint: EndpointInfo | null = null;
 
-      const feature = await this.generateFeatureForEndpoint(endpoint, scenarios, state.systemMap);
-      // Inject auth/middleware Given steps if present in codeRefs
-      if (feature && state.systemMap.codeRefs) {
+      if (state.systemMap) {
+        endpoint = this.findEndpointInfo(endpointKey, state.systemMap);
+      }
+      if (!endpoint) {
+        endpoint = this.findEndpointInfoFromSpec(state.apiSpec as any, method, path);
+      }
+      if (!endpoint) {
+        // Minimal fallback
+        endpoint = {
+          path,
+          method,
+          parameters: [],
+          responses: [],
+          relatedEndpoints: [],
+        } as EndpointInfo;
+      }
+
+      const feature = await this.generateFeatureForEndpoint(endpoint, scenarios, state.systemMap as any);
+
+      // Inject basic auth background based on OpenAPI security when available (LLM-only path)
+      const authInfo = this.extractAuthFromSpec(state.apiSpec as any);
+      if (feature && authInfo.required) {
+        const backgroundSteps: GherkinStep[] = [];
+        backgroundSteps.push({ keyword: 'Given', text: `a valid ${authInfo.header || 'Authorization'} credential is set` });
+        feature.background = feature.background || { title: 'API preconditions', steps: [] };
+        feature.background.steps = [...(feature.background.steps || []), ...backgroundSteps];
+      }
+
+      // Optionally inject middleware hints if system map exists (best-effort)
+      if (feature && state.systemMap && state.systemMap.codeRefs) {
         const refKey = `${endpoint.method} ${endpoint.path}`;
         const ref = state.systemMap.codeRefs[refKey];
-        const backgroundSteps: GherkinStep[] = [];
-        if (state.systemMap.auth?.required && state.systemMap.auth.header === 'Authorization') {
-          backgroundSteps.push({ keyword: 'Given', text: 'a valid Authorization token is set' });
-        }
         if (ref && ref.middlewares && ref.middlewares.length > 0) {
-          backgroundSteps.push({ keyword: 'And', text: 'middleware preconditions are satisfied' });
-        }
-        if (backgroundSteps.length > 0) {
+          const steps: GherkinStep[] = [{ keyword: 'And', text: 'middleware preconditions are satisfied' }];
           feature.background = feature.background || { title: 'API preconditions', steps: [] };
-          feature.background.steps = [...(feature.background.steps || []), ...backgroundSteps];
+          feature.background.steps = [...(feature.background.steps || []), ...steps];
         }
       }
+
       if (feature) {
         gherkinFeatures.push(feature);
       }
     }
 
-    // Generate summary
+    // 3) Generate summary
     const gherkinSummary = this.generateGherkinSummary(gherkinFeatures, state.testScenarios);
 
     console.log(`🥒 [GHERKIN GENERATOR] Generated ${gherkinFeatures.length} Gherkin features`);
@@ -269,21 +318,21 @@ export class LangGraphGherkinGenerator {
 
     // Feature tags
     if (feature.tags.length > 0) {
-      content += `@${feature.tags.join(' @')}\n`;
+      content += `@${feature.tags.join(' @')}` + '\n';
     }
 
     // Feature header
-    content += `Feature: ${feature.title}\n`;
+    content += `Feature: ${feature.title}` + '\n';
 
     if (feature.description) {
-      content += `\n  ${feature.description}\n`;
+      content += `\n  ${feature.description}` + '\n';
     }
 
     // Background
     if (feature.background) {
-      content += `\n  Background: ${feature.background.title}\n`;
+      content += `\n  Background: ${feature.background.title}` + '\n';
       for (const step of feature.background.steps) {
-        content += `    ${step.keyword} ${step.text}\n`;
+        content += `    ${step.keyword} ${step.text}` + '\n';
       }
     }
 
@@ -293,19 +342,19 @@ export class LangGraphGherkinGenerator {
 
       // Scenario tags
       if (scenario.tags.length > 0) {
-        content += `  @${scenario.tags.join(' @')}\n`;
+        content += `  @${scenario.tags.join(' @')}` + '\n';
       }
 
       // Scenario header
-      content += `  Scenario: ${scenario.title}\n`;
+      content += `  Scenario: ${scenario.title}` + '\n';
 
       if (scenario.description) {
-        content += `    ${scenario.description}\n`;
+        content += `    ${scenario.description}` + '\n';
       }
 
       // Steps
       for (const step of scenario.steps) {
-        content += `    ${step.keyword} ${step.text}\n`;
+        content += `    ${step.keyword} ${step.text}` + '\n';
 
         // Doc string
         if (step.docString) {
@@ -315,17 +364,17 @@ export class LangGraphGherkinGenerator {
         // Data table
         if (step.dataTable) {
           for (const row of step.dataTable) {
-            content += `      | ${row.join(' | ')} |\n`;
+            content += `      | ${row.join(' | ')} |` + '\n';
           }
         }
       }
 
       // Examples table
       if (scenario.examples) {
-        content += `\n    Examples:\n`;
-        content += `      | ${scenario.examples.headers.join(' | ')} |\n`;
+        content += `\n    Examples:` + '\n';
+        content += `      | ${scenario.examples.headers.join(' | ')} |` + '\n';
         for (const row of scenario.examples.rows) {
-          content += `      | ${row.join(' | ')} |\n`;
+          content += `      | ${row.join(' | ')} |` + '\n';
         }
       }
     }
@@ -399,6 +448,80 @@ export class LangGraphGherkinGenerator {
   private findEndpointInfo(endpointKey: string, systemMap: SystemMap): EndpointInfo | null {
     const [method, path] = endpointKey.split(' ', 2);
     return systemMap.endpoints.find((e) => e.method === method && e.path === path) || null;
+  }
+
+  // LLM-only fallback: derive endpoint details from OpenAPI spec when system map is not available
+  private findEndpointInfoFromSpec(apiSpec: any, method: string, path: string): EndpointInfo | null {
+    try {
+      const paths = apiSpec?.paths || {};
+      const pathItem = paths[path];
+      if (!pathItem) return null;
+      const op = pathItem[method.toLowerCase()];
+      if (!op) return null;
+
+      // Parameters
+      const params: any[] = (op.parameters || pathItem.parameters || []).map((p: any) => ({
+        name: p.name,
+        type: p.schema?.type || 'string',
+        required: !!p.required,
+        format: p.schema?.format,
+      }));
+
+      // Request body
+      let requestBody: any = undefined;
+      const content = op.requestBody?.content || {};
+      if (content['application/json']?.schema) {
+        requestBody = {
+          name: 'requestBody',
+          type: 'object',
+          properties: content['application/json'].schema.properties || {},
+          required: content['application/json'].schema.required || [],
+          examples: [],
+        };
+      }
+
+      // Responses
+      const responses: any[] = Object.entries(op.responses || {}).map(([code, r]: any) => ({
+        statusCode: Number(code) || 0,
+        description: r?.description || '',
+        schema: r?.content?.['application/json']?.schema,
+      }));
+
+      return {
+        path,
+        method: method.toUpperCase(),
+        parameters: params,
+        requestBody,
+        responses,
+        relatedEndpoints: [],
+      } as EndpointInfo;
+    } catch {
+      return null;
+    }
+  }
+
+  // Basic auth inference from OpenAPI securitySchemes (LLM-only)
+  private extractAuthFromSpec(apiSpec: any): { required: boolean; header?: string } {
+    try {
+      const components = apiSpec?.components || {};
+      const schemes = components.securitySchemes || {};
+      const sec = apiSpec?.security || [];
+      const required = Array.isArray(sec) && sec.length > 0;
+      if (!required) return { required: false };
+
+      // Prefer bearer
+      for (const [name, scheme] of Object.entries<any>(schemes)) {
+        if (scheme?.type === 'http' && scheme?.scheme === 'bearer') {
+          return { required: true, header: 'Authorization' };
+        }
+        if (scheme?.type === 'apiKey' && scheme?.in === 'header' && scheme?.name) {
+          return { required: true, header: scheme.name };
+        }
+      }
+      return { required: true, header: 'Authorization' };
+    } catch {
+      return { required: false };
+    }
   }
 
   private inferBusinessDomain(endpoint: EndpointInfo): string {
