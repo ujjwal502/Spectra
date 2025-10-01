@@ -1,4 +1,5 @@
 import { ChatOpenAI } from '@langchain/openai';
+import { AzureAIService } from '../services/azureAiService';
 import {
   TestingState,
   GherkinFeature,
@@ -18,10 +19,16 @@ export class LangGraphGherkinGenerator {
   private model: ChatOpenAI;
 
   constructor() {
-    this.model = new ChatOpenAI({
-      modelName: 'gpt-4',
-      temperature: 0.2, // Slightly higher for more creative Gherkin language
-    });
+    try {
+      const azure = new AzureAIService();
+
+      this.model = azure.getChatModel();
+    } catch {
+      this.model = new ChatOpenAI({
+        modelName: 'gpt-4',
+        temperature: 0.2, // Slightly higher for more creative Gherkin language
+      });
+    }
   }
 
   /**
@@ -53,8 +60,8 @@ export class LangGraphGherkinGenerator {
 
     // 0) Try direct LLM features from spec
     try {
-      const { AIService } = await import('../services/aiService');
-      const ai = new AIService();
+      const { AzureAIService } = await import('../services/azureAiService');
+      const ai = new AzureAIService();
       const direct = await ai.generateGherkinFeaturesFromSpec(state.apiSpec as any, 20);
 
       if (Array.isArray(direct) && direct.length > 0) {

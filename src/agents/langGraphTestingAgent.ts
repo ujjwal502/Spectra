@@ -22,11 +22,12 @@ import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/lang
 import { v4 as uuidv4 } from 'uuid';
 import { GherkinFeature, GherkinSummary } from '../types/langGraphTypes';
 import axios from 'axios';
-import { AIService } from '../services/aiService';
+import { AzureAIService } from '../services/azureAiService';
 import { validateOpenApiSpec } from '../utils/specValidator';
 
 export class LangGraphTestingAgent {
   private model: ChatOpenAI;
+  private azure?: AzureAIService;
   private gherkinGenerator: LangGraphGherkinGenerator;
   private codeRoot?: string;
   private contextDepth: number = 1200;
@@ -42,10 +43,13 @@ export class LangGraphTestingAgent {
     maxRetries?: number;
     headers?: Record<string, string>;
   }) {
-    this.model = new ChatOpenAI({
-      modelName: 'gpt-4',
-      temperature: 0,
-    });
+    // Prefer Azure model when configured, fallback to default ChatOpenAI
+    try {
+      this.azure = new AzureAIService();
+      this.model = this.azure.getChatModel();
+    } catch {
+      this.model = new ChatOpenAI({ modelName: 'gpt-4', temperature: 0 });
+    }
     this.gherkinGenerator = new LangGraphGherkinGenerator();
     this.codeRoot = options?.codeRoot;
     if (options?.contextDepth && Number.isFinite(options.contextDepth))
@@ -232,7 +236,7 @@ export class LangGraphTestingAgent {
 
   private async generateLLMStepsNode(state: TestingState): Promise<TestingState> {
     console.log('🧠 [LLM] Generating executable steps and categorized scenarios from spec...');
-    const ai = new AIService();
+    const ai = new AzureAIService();
     const [steps, categorized] = await Promise.all([
       ai.generateCurlPlanFromSpec(state.apiSpec, 10),
       ai.generateCategorizedScenariosFromSpec(state.apiSpec, 10),

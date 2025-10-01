@@ -1,5 +1,5 @@
 import { SpecGeneratorOptions } from '../types';
-import { AIService } from '../services/aiService';
+import { AzureAIService } from '../services/azureAiService';
 import { ChatOpenAI } from '@langchain/openai';
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
 import { v4 as uuidv4 } from 'uuid';
@@ -50,7 +50,7 @@ interface SpecGenerationAgentState {
  * but avoids complex typing issues by using a simpler orchestration pattern
  */
 export class EnhancedSpecGenerator {
-  private aiService: AIService;
+  private aiService: AzureAIService;
   private llm: ChatOpenAI;
   private options: SpecGeneratorOptions;
 
@@ -64,11 +64,16 @@ export class EnhancedSpecGenerator {
       ...options,
     };
 
-    this.aiService = new AIService();
-    this.llm = new ChatOpenAI({
-      model: process.env.OPENAI_MODEL || 'gpt-4',
-      temperature: 1, // Use default temperature for compatibility
-    });
+    this.aiService = new AzureAIService();
+    try {
+      const azure = new AzureAIService();
+      this.llm = azure.getChatModel();
+    } catch {
+      this.llm = new ChatOpenAI({
+        model: process.env.OPENAI_MODEL || 'gpt-4',
+        temperature: 1, // Use default temperature for compatibility
+      });
+    }
   }
 
   /**
@@ -169,7 +174,10 @@ export class EnhancedSpecGenerator {
         .addEdge('generate', 'validate')
         .addConditionalEdges(
           'validate',
-          (s: SpecGenerationAgentState) => (s.confidence && s.confidence >= 0.7 && (!s.errors || s.errors.length === 0) ? END : 'enhance'),
+          (s: SpecGenerationAgentState) =>
+            s.confidence && s.confidence >= 0.7 && (!s.errors || s.errors.length === 0)
+              ? END
+              : 'enhance',
           { enhance: 'enhance', [END]: END },
         )
         .addEdge('enhance', END)
@@ -832,7 +840,7 @@ export class EnhancedSpecGenerator {
           finalState.errors.forEach((error) => console.log(`  - ${error}`));
         }
 
-        console.log("returning here with langgraph");
+        console.log('returning here with langgraph');
 
         return finalState.generatedSchema || {};
       } catch (err) {
