@@ -1,4 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai';
+import dotenv from 'dotenv';
+dotenv.config();
 import { AzureAIService } from '../services/azureAiService';
 import {
   TestingState,

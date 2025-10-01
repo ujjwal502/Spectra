@@ -1,4 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai';
+import dotenv from 'dotenv';
+dotenv.config();
 import { OpenAPIV3 } from 'openapi-types';
 import {
   TestingState,

@@ -1,6 +1,8 @@
 import { SpecGeneratorOptions } from '../types';
 import { AzureAIService } from '../services/azureAiService';
 import { ChatOpenAI } from '@langchain/openai';
+import dotenv from 'dotenv';
+dotenv.config();
 import { StateGraph, START, END, Annotation, MemorySaver } from '@langchain/langgraph';
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs';

@@ -110,7 +110,11 @@ export class AzureAIService {
   private initializeModels(): void {
     console.log('🔧 [AZURE AI SERVICE] Initializing Azure OpenAI models...');
 
+    console.log('🔧 [AZURE AI SERVICE] SSL_CERT_FILE:', process.env.SSL_CERT_FILE);
+
     const certPath = process.env.SSL_CERT_FILE || '';
+
+    console.log('🔧 [AZURE AI SERVICE] certPath:', certPath);
     const customAgent = certPath
       ? new https.Agent({
           ca: fs.readFileSync(certPath),
