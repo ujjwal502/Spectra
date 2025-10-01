@@ -7,15 +7,16 @@ export function addEnhancedCommands(program: Command): void {
     .command('run-intelligent-testing')
     .description('Run intelligent testing (LLM-only unified flow) on a given API spec')
     .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
-    .option('--base-url <url>', 'Override base URL used for requests (e.g., http://host.docker.internal:3000)')
+    .option(
+      '--base-url <url>',
+      'Override base URL used for requests (e.g., http://host.docker.internal:3000)',
+    )
     .option('--auth-bearer <token>', 'Add Authorization: Bearer <token> to all requests')
     .option('-H, --header <key:value...>', 'Add arbitrary headers to all requests (repeatable)')
     .action(async (apiSpecPath: string, opts: any) => {
       try {
         console.log('Starting intelligent testing...');
         console.log('📄 API Spec:', apiSpecPath);
-
-        console.log("Ujjwal is running")
 
         if (opts.baseUrl) {
           process.env.SPECTRA_BASE_URL = opts.baseUrl;
@@ -46,7 +47,9 @@ export function addEnhancedCommands(program: Command): void {
             const idx = String(h).indexOf(':');
             if (idx > 0) {
               const k = String(h).slice(0, idx).trim();
-              const v = String(h).slice(idx + 1).trim();
+              const v = String(h)
+                .slice(idx + 1)
+                .trim();
               if (k) globalHeaders[k] = v;
             }
           }
@@ -140,11 +143,15 @@ export function addEnhancedCommands(program: Command): void {
   // Deprecate old commands by routing to unified flow
   program
     .command('llm-curl')
-    .description('[Deprecated] Use run-intelligent-testing instead. This routes to the unified flow.')
+    .description(
+      '[Deprecated] Use run-intelligent-testing instead. This routes to the unified flow.',
+    )
     .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
     .allowUnknownOption(true)
     .action(async (apiSpecPath: string, _opts: any) => {
-      console.log('⚠️  llm-curl is deprecated. Routing to run-intelligent-testing (unified flow)...');
+      console.log(
+        '⚠️  llm-curl is deprecated. Routing to run-intelligent-testing (unified flow)...',
+      );
       const args = process.argv.filter((a) => !a.includes('llm-curl'));
       args.splice(args.indexOf('enhanced.ts') + 1, 0, 'run-intelligent-testing');
       process.argv = args;
@@ -153,11 +160,15 @@ export function addEnhancedCommands(program: Command): void {
 
   program
     .command('llm-scenarios')
-    .description('[Deprecated] Scenarios are generated within the unified flow. Use run-intelligent-testing.')
+    .description(
+      '[Deprecated] Scenarios are generated within the unified flow. Use run-intelligent-testing.',
+    )
     .argument('<apiSpecPath>', 'Path to OpenAPI/Swagger specification file')
     .allowUnknownOption(true)
     .action(async (_apiSpecPath: string) => {
-      console.log('⚠️  llm-scenarios is deprecated. Use run-intelligent-testing to generate and execute scenarios.');
+      console.log(
+        '⚠️  llm-scenarios is deprecated. Use run-intelligent-testing to generate and execute scenarios.',
+      );
       process.exit(0);
     });
 }

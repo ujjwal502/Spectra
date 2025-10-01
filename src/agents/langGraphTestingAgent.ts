@@ -161,8 +161,6 @@ export class LangGraphTestingAgent {
     }
   }
 
-
-
   /**
    * New minimal LLM-driven graph: validate -> generate -> execute -> analyze
    */
@@ -300,16 +298,16 @@ export class LangGraphTestingAgent {
         state = { ...state, systemMap };
       }
       const updated = await this.gherkinGenerator.generateGherkinFeatures(state);
-    return {
+      return {
         ...updated,
         gherkinFeatures: updated.gherkinFeatures || [],
         gherkinSummary: updated.gherkinSummary || state.gherkinSummary,
-      currentPhase: 'execution',
+        currentPhase: 'execution',
       };
     } catch (e) {
       console.log('⚠️ [LLM] Gherkin generation failed, continuing without features');
-    return {
-      ...state,
+      return {
+        ...state,
         gherkinFeatures: state.gherkinFeatures || [],
         gherkinSummary: state.gherkinSummary,
         currentPhase: 'execution',
@@ -428,7 +426,7 @@ export class LangGraphTestingAgent {
       console.log(`🌐 [SPEC EXTRACTION] Found server URL in API spec: ${serverUrl}`);
       return serverUrl;
     }
-    
+
     // Fallback to default URLs - try Node.js first, then Java
     const nodeUrl = 'http://localhost:3000';
     console.log(
@@ -446,11 +444,11 @@ export class LangGraphTestingAgent {
       console.log(`🌐 [URL EXTRACTION] Found base URL in system map: ${systemMap.baseUrl}`);
       return systemMap.baseUrl;
     }
-    
+
     // Fallback to default URLs - try Node.js first, then Java
     const nodeUrl = 'http://localhost:3000';
     const javaUrl = 'http://localhost:8081';
-    
+
     console.log(
       `🌐 [URL EXTRACTION] No base URL found in system map, trying Node.js default: ${nodeUrl}`,
     );
@@ -526,7 +524,12 @@ export class LangGraphTestingAgent {
     }
 
     let requestBody: SchemaInfo | undefined = undefined;
-    if (operation.requestBody && operation.requestBody.content && operation.requestBody.content['application/json'] && operation.requestBody.content['application/json'].schema) {
+    if (
+      operation.requestBody &&
+      operation.requestBody.content &&
+      operation.requestBody.content['application/json'] &&
+      operation.requestBody.content['application/json'].schema
+    ) {
       const schema = operation.requestBody.content['application/json'].schema;
       requestBody = await this.analyzeSchema('requestBody', schema, apiSpec);
     }
@@ -536,7 +539,7 @@ export class LangGraphTestingAgent {
       for (const [statusCode, response] of Object.entries(operation.responses)) {
         const content = (response as any).content || {};
         const schema = content['application/json']?.schema;
-          responses.push({
+        responses.push({
           statusCode: parseInt(String(statusCode), 10),
           schema,
           description: (response as any).description || '',
@@ -611,7 +614,9 @@ export class LangGraphTestingAgent {
     // Keep simple for LLM-only: record mismatch insights
     const insights: string[] = [];
     if (!result.success) {
-      insights.push(`Expected ${scenario.expectedOutcome.statusCode}, got ${result.response?.status}`);
+      insights.push(
+        `Expected ${scenario.expectedOutcome.statusCode}, got ${result.response?.status}`,
+      );
     }
     return insights;
   }
@@ -634,11 +639,14 @@ export class LangGraphTestingAgent {
     if (typeof primary === 'number') return primary;
     // fallback: find declared 2xx codes for this endpoint if available
     const ep = systemMap.endpoints.find(
-      (e) => e.path === scenario.endpoint && e.method.toUpperCase() === scenario.method.toUpperCase(),
+      (e) =>
+        e.path === scenario.endpoint && e.method.toUpperCase() === scenario.method.toUpperCase(),
     );
     const advertised2xx = ep
       ? ep.responses
-          .map((r) => (typeof r.statusCode === 'number' ? r.statusCode : parseInt(String(r.statusCode), 10)))
+          .map((r) =>
+            typeof r.statusCode === 'number' ? r.statusCode : parseInt(String(r.statusCode), 10),
+          )
           .filter((code) => code >= 200 && code < 300)
       : [];
     return advertised2xx.length ? advertised2xx : 200;
@@ -2339,12 +2347,11 @@ ${
     const path = await import('path');
 
     // Minimal seeding guidance for LLM-only flow
-    const instructions = (
+    const instructions =
       '# Test Data Seeding Instructions\n\n' +
       'Spectra generates mock data via LLMs based on your OpenAPI schemas.\n' +
       'To maximize accuracy, add examples/enums and validation constraints to your spec.\n\n' +
-      'If your API requires existing IDs, seed a couple of records so read/update/delete tests can pass.\n'
-    );
+      'If your API requires existing IDs, seed a couple of records so read/update/delete tests can pass.\n';
     const instructionsPath = path.join(outputDir, 'TEST_DATA_SETUP.md');
 
     fs.writeFileSync(instructionsPath, instructions);

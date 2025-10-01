@@ -125,7 +125,9 @@ program
 
     if (allPassed) {
       console.log('🎉 Environment is ready for Spectra Enhanced!');
-      console.log('Try: npx ts-node src/cli/enhanced.ts run-intelligent-testing ./path/to/openapi.json');
+      console.log(
+        'Try: npx ts-node src/cli/enhanced.ts run-intelligent-testing ./path/to/openapi.json',
+      );
     } else {
       console.log('❌ Please fix the above issues before using enhanced features.');
       process.exit(1);

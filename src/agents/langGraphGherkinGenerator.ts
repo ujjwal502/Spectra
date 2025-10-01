@@ -56,22 +56,35 @@ export class LangGraphGherkinGenerator {
       const { AIService } = await import('../services/aiService');
       const ai = new AIService();
       const direct = await ai.generateGherkinFeaturesFromSpec(state.apiSpec as any, 20);
+
       if (Array.isArray(direct) && direct.length > 0) {
-        console.log(`🥒 [GHERKIN GENERATOR] Using ${direct.length} features from direct LLM generation`);
+        console.log(
+          `🥒 [GHERKIN GENERATOR] Using ${direct.length} features from direct LLM generation`,
+        );
+
         const normalized: GherkinFeature[] = direct.map((f: any) => ({
           title: String(f.title || 'API Feature'),
           description: String(f.description || ''),
           background: f.background,
           scenarios: Array.isArray(f.scenarios) ? f.scenarios : [],
           tags: Array.isArray(f.tags) ? f.tags : [],
-          endpointContext: f.endpointContext || { path: '/', method: 'GET', businessDomain: 'General API Operations' },
+          endpointContext: f.endpointContext || {
+            path: '/',
+            method: 'GET',
+            businessDomain: 'General API Operations',
+          },
         }));
+
         const summary = this.generateGherkinSummary(normalized, state.testScenarios);
+
         return {
           ...state,
           gherkinFeatures: normalized,
           gherkinSummary: summary,
-          messages: [...state.messages, `Gherkin generated directly by LLM: ${normalized.length} features.`],
+          messages: [
+            ...state.messages,
+            `Gherkin generated directly by LLM: ${normalized.length} features.`,
+          ],
         };
       }
     } catch (e) {
@@ -89,9 +102,11 @@ export class LangGraphGherkinGenerator {
       if (state.systemMap) {
         endpoint = this.findEndpointInfo(endpointKey, state.systemMap);
       }
+
       if (!endpoint) {
         endpoint = this.findEndpointInfoFromSpec(state.apiSpec as any, method, path);
       }
+
       if (!endpoint) {
         // Minimal fallback
         endpoint = {
@@ -103,13 +118,21 @@ export class LangGraphGherkinGenerator {
         } as EndpointInfo;
       }
 
-      const feature = await this.generateFeatureForEndpoint(endpoint, scenarios, state.systemMap as any);
+      const feature = await this.generateFeatureForEndpoint(
+        endpoint,
+        scenarios,
+        state.systemMap as any,
+      );
 
       // Inject basic auth background based on OpenAPI security when available (LLM-only path)
       const authInfo = this.extractAuthFromSpec(state.apiSpec as any);
+
       if (feature && authInfo.required) {
         const backgroundSteps: GherkinStep[] = [];
-        backgroundSteps.push({ keyword: 'Given', text: `a valid ${authInfo.header || 'Authorization'} credential is set` });
+        backgroundSteps.push({
+          keyword: 'Given',
+          text: `a valid ${authInfo.header || 'Authorization'} credential is set`,
+        });
         feature.background = feature.background || { title: 'API preconditions', steps: [] };
         feature.background.steps = [...(feature.background.steps || []), ...backgroundSteps];
       }
@@ -118,8 +141,12 @@ export class LangGraphGherkinGenerator {
       if (feature && state.systemMap && state.systemMap.codeRefs) {
         const refKey = `${endpoint.method} ${endpoint.path}`;
         const ref = state.systemMap.codeRefs[refKey];
+
         if (ref && ref.middlewares && ref.middlewares.length > 0) {
-          const steps: GherkinStep[] = [{ keyword: 'And', text: 'middleware preconditions are satisfied' }];
+          const steps: GherkinStep[] = [
+            { keyword: 'And', text: 'middleware preconditions are satisfied' },
+          ];
+
           feature.background = feature.background || { title: 'API preconditions', steps: [] };
           feature.background.steps = [...(feature.background.steps || []), ...steps];
         }
@@ -451,7 +478,11 @@ export class LangGraphGherkinGenerator {
   }
 
   // LLM-only fallback: derive endpoint details from OpenAPI spec when system map is not available
-  private findEndpointInfoFromSpec(apiSpec: any, method: string, path: string): EndpointInfo | null {
+  private findEndpointInfoFromSpec(
+    apiSpec: any,
+    method: string,
+    path: string,
+  ): EndpointInfo | null {
     try {
       const paths = apiSpec?.paths || {};
       const pathItem = paths[path];

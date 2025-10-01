@@ -120,7 +120,9 @@ export class CurlRunner {
         assertions.push({
           name: 'Schema validation',
           success: true,
-          info: isJson ? 'No schema validation performed (no schema specified)' : 'Skipped schema validation (non-JSON response)',
+          info: isJson
+            ? 'No schema validation performed (no schema specified)'
+            : 'Skipped schema validation (non-JSON response)',
         });
       }
 
@@ -236,7 +238,13 @@ export class CurlRunner {
   /**
    * Build a CURL command for the given test case
    */
-  private buildCurlCommand(url: string, method: string, request?: any, files?: any[], headers?: Record<string, string>): string {
+  private buildCurlCommand(
+    url: string,
+    method: string,
+    request?: any,
+    files?: any[],
+    headers?: Record<string, string>,
+  ): string {
     let command = `curl -s -w "\\n%{http_code}" -X ${method.toUpperCase()} "${url}"`;
 
     command += ` --max-time ${Math.ceil(this.timeout / 1000)}`;
@@ -304,9 +312,10 @@ export class CurlRunner {
         );
         // Exclude path parameters from JSON body to respect OpenAPI schemas
         const usedPathParams: Set<string> = (this as any)._usedPathParams || new Set();
-        const bodyOnly = request && typeof request === 'object'
-          ? Object.fromEntries(Object.entries(request).filter(([k]) => !usedPathParams.has(k)))
-          : request;
+        const bodyOnly =
+          request && typeof request === 'object'
+            ? Object.fromEntries(Object.entries(request).filter(([k]) => !usedPathParams.has(k)))
+            : request;
         console.log(
           '🔧 [CURL-RUNNER] Non-GET request - Final JSON body:',
           JSON.stringify(bodyOnly, null, 2),

@@ -35,10 +35,13 @@ export interface SystemMap {
   dependencies: DependencyInfo[];
   baseUrl?: string;
   // NEW: lightweight code references and auth hints
-  codeRefs?: Record<string, {
-    implSnippets: string[];
-    middlewares: string[];
-  }>;
+  codeRefs?: Record<
+    string,
+    {
+      implSnippets: string[];
+      middlewares: string[];
+    }
+  >;
   auth?: {
     required?: boolean;
     type?: 'jwt' | 'basic' | 'session';
@@ -82,7 +85,14 @@ export interface SchemaInfo {
 
 export interface TestScenario {
   id: string;
-  type: 'functional' | 'security' | 'boundary' | 'error' | 'integration' | 'performance' | 'reliability';
+  type:
+    | 'functional'
+    | 'security'
+    | 'boundary'
+    | 'error'
+    | 'integration'
+    | 'performance'
+    | 'reliability';
   endpoint: string;
   method: string;
   description: string;
