@@ -1,9 +1,9 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "Spectra Demo API - Node.js Express",
-    "description": "A lightweight REST API built with Node.js and Express, designed for demonstrating Spectra's comprehensive testing capabilities. This API provides full CRUD operations for user management with comprehensive validation and error handling.",
-    "version": "1.0.0",
+    "title": "Spectra Demo API - E-Commerce Platform",
+    "description": "A comprehensive REST API built with Node.js and Express for an e-commerce platform. Features user management, product catalog, orders, reviews, shopping cart, wishlists, coupons, and more. All data is stored in-memory for testing purposes.",
+    "version": "2.0.0",
     "contact": {
       "name": "Spectra Demo Support",
       "email": "demo@spectra.dev"
@@ -12,36 +12,50 @@
   "servers": [
     {
       "url": "http://localhost:3000",
-      "description": "Local development server (Node.js Express)"
+      "description": "Local development server"
     }
+  ],
+  "tags": [
+    { "name": "Users", "description": "User management operations" },
+    { "name": "Products", "description": "Product catalog operations" },
+    { "name": "Categories", "description": "Product category management" },
+    { "name": "Orders", "description": "Order management" },
+    { "name": "Reviews", "description": "Product review operations" },
+    { "name": "Cart", "description": "Shopping cart operations" },
+    { "name": "Coupons", "description": "Discount coupon management" },
+    { "name": "Addresses", "description": "User address management" },
+    { "name": "Wishlist", "description": "User wishlist operations" },
+    { "name": "Notifications", "description": "User notification management" },
+    { "name": "Stats", "description": "Analytics and statistics" },
+    { "name": "Admin", "description": "Administrative operations" },
+    { "name": "System", "description": "System health and status" }
   ],
   "paths": {
     "/api/v1/users": {
       "get": {
         "summary": "Get all users",
-        "description": "Retrieve a list of all users in the system",
+        "description": "Retrieve a paginated list of users with optional filtering",
         "operationId": "getAllUsers",
         "tags": ["Users"],
+        "parameters": [
+          { "name": "department", "in": "query", "schema": { "type": "string" }, "description": "Filter by department" },
+          { "name": "role", "in": "query", "schema": { "type": "string", "enum": ["admin", "user", "manager"] }, "description": "Filter by role" },
+          { "name": "isActive", "in": "query", "schema": { "type": "boolean" }, "description": "Filter by active status" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 }, "description": "Page number" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 }, "description": "Items per page" }
+        ],
         "responses": {
           "200": {
-            "description": "List of users retrieved successfully",
+            "description": "Paginated list of users",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/User"
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/User" } },
+                    "pagination": { "$ref": "#/components/schemas/Pagination" }
                   }
-                },
-                "example": [
-                  {
-                    "id": 1,
-                    "name": "John Doe",
-                    "email": "john.doe@example.com",
-                    "age": 30,
-                    "department": "Engineering"
-                  }
-                ]
+                }
               }
             }
           }
@@ -49,280 +63,796 @@
       },
       "post": {
         "summary": "Create a new user",
-        "description": "Create a new user in the system with validation. Email must be unique.",
         "operationId": "createUser",
         "tags": ["Users"],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateUserRequest"
-              },
-              "example": {
-                "name": "Alice Johnson",
-                "email": "alice.johnson@example.com",
-                "age": 25,
-                "department": "Marketing"
-              }
+              "schema": { "$ref": "#/components/schemas/CreateUserRequest" }
             }
           }
         },
         "responses": {
-          "201": {
-            "description": "User created successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/User"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error or duplicate email",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationError"
-                }
-              }
-            }
-          }
+          "201": { "description": "User created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "400": { "description": "Validation error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }
       }
     },
     "/api/v1/users/{id}": {
       "get": {
         "summary": "Get user by ID",
-        "description": "Retrieve a specific user by their ID. Returns 500 error for ID 999 to test error handling.",
         "operationId": "getUserById",
         "tags": ["Users"],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 1
-            },
-            "description": "User ID"
-          }
-        ],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
         "responses": {
-          "200": {
-            "description": "User found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/User"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "User not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Server error (when ID is 999 for testing)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ServerError"
-                }
-              }
-            }
-          }
+          "200": { "description": "User found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "404": { "description": "User not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "Server error (ID 999 triggers this)" }
         }
       },
       "put": {
-        "summary": "Update user",
-        "description": "Update an existing user's information. Email must be unique among all users.",
+        "summary": "Update user (full replacement)",
         "operationId": "updateUser",
         "tags": ["Users"],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 1
-            },
-            "description": "User ID"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateUserRequest"
-              }
-            }
-          }
-        },
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateUserRequest" } } } },
         "responses": {
-          "200": {
-            "description": "User updated successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/User"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error or duplicate email",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "User not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          }
+          "200": { "description": "User updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "404": { "description": "User not found" },
+          "400": { "description": "Validation error" }
+        }
+      },
+      "patch": {
+        "summary": "Partially update user",
+        "operationId": "patchUser",
+        "tags": ["Users"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PatchUserRequest" } } } },
+        "responses": {
+          "200": { "description": "User updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "404": { "description": "User not found" }
         }
       },
       "delete": {
         "summary": "Delete user",
-        "description": "Remove a user from the system",
         "operationId": "deleteUser",
         "tags": ["Users"],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64",
-              "minimum": 1
-            },
-            "description": "User ID"
-          }
-        ],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
         "responses": {
-          "204": {
-            "description": "User deleted successfully"
-          },
-          "404": {
-            "description": "User not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NotFoundError"
-                }
-              }
-            }
-          }
+          "204": { "description": "User deleted" },
+          "404": { "description": "User not found" }
         }
       }
     },
     "/api/v1/users/department/{department}": {
       "get": {
         "summary": "Get users by department",
-        "description": "Retrieve all users belonging to a specific department (case-insensitive)",
         "operationId": "getUsersByDepartment",
         "tags": ["Users"],
+        "parameters": [{ "name": "department", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Users in department", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/User" } } } } }
+        }
+      }
+    },
+    "/api/v1/users/{id}/orders": {
+      "get": {
+        "summary": "Get orders for a user",
+        "operationId": "getUserOrders",
+        "tags": ["Users", "Orders"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "User orders", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Order" } } } } },
+          "404": { "description": "User not found" }
+        }
+      }
+    },
+    "/api/v1/users/{id}/reviews": {
+      "get": {
+        "summary": "Get reviews by a user",
+        "operationId": "getUserReviews",
+        "tags": ["Users", "Reviews"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "User reviews", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Review" } } } } },
+          "404": { "description": "User not found" }
+        }
+      }
+    },
+    "/api/v1/products": {
+      "get": {
+        "summary": "Get all products",
+        "operationId": "getAllProducts",
+        "tags": ["Products"],
         "parameters": [
-          {
-            "name": "department",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "description": "Department name",
-            "example": "Engineering"
-          }
+          { "name": "categoryId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "brand", "in": "query", "schema": { "type": "string" } },
+          { "name": "minPrice", "in": "query", "schema": { "type": "number" } },
+          { "name": "maxPrice", "in": "query", "schema": { "type": "number" } },
+          { "name": "inStock", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "sortBy", "in": "query", "schema": { "type": "string", "enum": ["createdAt", "price", "rating", "name"] } },
+          { "name": "order", "in": "query", "schema": { "type": "string", "enum": ["asc", "desc"] } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } }
         ],
         "responses": {
-          "200": {
-            "description": "Users in department retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/User"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid department parameter",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ValidationError"
-                }
-              }
-            }
-          }
+          "200": { "description": "Paginated product list", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Product" } }, "pagination": { "$ref": "#/components/schemas/Pagination" } } } } } }
+        }
+      },
+      "post": {
+        "summary": "Create a new product",
+        "operationId": "createProduct",
+        "tags": ["Products"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateProductRequest" } } } },
+        "responses": {
+          "201": { "description": "Product created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Product" } } } },
+          "400": { "description": "Validation error" }
+        }
+      }
+    },
+    "/api/v1/products/featured": {
+      "get": {
+        "summary": "Get featured products",
+        "operationId": "getFeaturedProducts",
+        "tags": ["Products"],
+        "responses": {
+          "200": { "description": "Featured products (rating >= 4.5)", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Product" } } } } }
+        }
+      }
+    },
+    "/api/v1/products/search": {
+      "get": {
+        "summary": "Search products",
+        "operationId": "searchProducts",
+        "tags": ["Products"],
+        "parameters": [
+          { "name": "q", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Search query" },
+          { "name": "category", "in": "query", "schema": { "type": "integer" } },
+          { "name": "minRating", "in": "query", "schema": { "type": "number" } }
+        ],
+        "responses": {
+          "200": { "description": "Search results", "content": { "application/json": { "schema": { "type": "object", "properties": { "query": { "type": "string" }, "count": { "type": "integer" }, "results": { "type": "array", "items": { "$ref": "#/components/schemas/Product" } } } } } } },
+          "400": { "description": "Search query required" }
+        }
+      }
+    },
+    "/api/v1/products/{id}": {
+      "get": {
+        "summary": "Get product by ID",
+        "operationId": "getProductById",
+        "tags": ["Products"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Product found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Product" } } } },
+          "404": { "description": "Product not found" }
+        }
+      },
+      "put": {
+        "summary": "Update product",
+        "operationId": "updateProduct",
+        "tags": ["Products"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateProductRequest" } } } },
+        "responses": {
+          "200": { "description": "Product updated" },
+          "404": { "description": "Product not found" }
+        }
+      },
+      "patch": {
+        "summary": "Partially update product",
+        "operationId": "patchProduct",
+        "tags": ["Products"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PatchProductRequest" } } } },
+        "responses": {
+          "200": { "description": "Product updated" },
+          "404": { "description": "Product not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete product",
+        "operationId": "deleteProduct",
+        "tags": ["Products"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "204": { "description": "Product deleted" },
+          "404": { "description": "Product not found" }
+        }
+      }
+    },
+    "/api/v1/products/{id}/reviews": {
+      "get": {
+        "summary": "Get reviews for a product",
+        "operationId": "getProductReviews",
+        "tags": ["Products", "Reviews"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Product reviews", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Review" } } } } },
+          "404": { "description": "Product not found" }
+        }
+      }
+    },
+    "/api/v1/products/{id}/stock": {
+      "patch": {
+        "summary": "Adjust product stock",
+        "operationId": "adjustProductStock",
+        "tags": ["Products"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "adjustment": { "type": "integer", "description": "Positive to add, negative to subtract" } }, "required": ["adjustment"] } } } },
+        "responses": {
+          "200": { "description": "Stock adjusted", "content": { "application/json": { "schema": { "type": "object", "properties": { "productId": { "type": "integer" }, "previousStock": { "type": "integer" }, "newStock": { "type": "integer" } } } } } },
+          "400": { "description": "Insufficient stock" },
+          "404": { "description": "Product not found" }
+        }
+      }
+    },
+    "/api/v1/categories": {
+      "get": {
+        "summary": "Get all categories",
+        "operationId": "getAllCategories",
+        "tags": ["Categories"],
+        "parameters": [
+          { "name": "parentId", "in": "query", "schema": { "type": "string" }, "description": "Filter by parent (use 'null' for root categories)" },
+          { "name": "includeInactive", "in": "query", "schema": { "type": "boolean" } }
+        ],
+        "responses": {
+          "200": { "description": "Category list", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Category" } } } } }
+        }
+      },
+      "post": {
+        "summary": "Create a new category",
+        "operationId": "createCategory",
+        "tags": ["Categories"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateCategoryRequest" } } } },
+        "responses": {
+          "201": { "description": "Category created" },
+          "400": { "description": "Validation error" }
+        }
+      }
+    },
+    "/api/v1/categories/tree": {
+      "get": {
+        "summary": "Get category tree",
+        "operationId": "getCategoryTree",
+        "tags": ["Categories"],
+        "responses": {
+          "200": { "description": "Hierarchical category tree", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/CategoryTree" } } } } }
+        }
+      }
+    },
+    "/api/v1/categories/{id}": {
+      "get": {
+        "summary": "Get category by ID",
+        "operationId": "getCategoryById",
+        "tags": ["Categories"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Category found" },
+          "404": { "description": "Category not found" }
+        }
+      },
+      "put": {
+        "summary": "Update category",
+        "operationId": "updateCategory",
+        "tags": ["Categories"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateCategoryRequest" } } } },
+        "responses": {
+          "200": { "description": "Category updated" },
+          "404": { "description": "Category not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete category",
+        "operationId": "deleteCategory",
+        "tags": ["Categories"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "204": { "description": "Category deleted" },
+          "400": { "description": "Cannot delete (has products or subcategories)" },
+          "404": { "description": "Category not found" }
+        }
+      }
+    },
+    "/api/v1/categories/{id}/products": {
+      "get": {
+        "summary": "Get products in category",
+        "operationId": "getCategoryProducts",
+        "tags": ["Categories", "Products"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Products in category" },
+          "404": { "description": "Category not found" }
+        }
+      }
+    },
+    "/api/v1/orders": {
+      "get": {
+        "summary": "Get all orders",
+        "operationId": "getAllOrders",
+        "tags": ["Orders"],
+        "parameters": [
+          { "name": "userId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "processing", "shipped", "delivered", "cancelled"] } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "endDate", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } }
+        ],
+        "responses": {
+          "200": { "description": "Paginated order list" }
+        }
+      },
+      "post": {
+        "summary": "Create a new order",
+        "operationId": "createOrder",
+        "tags": ["Orders"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateOrderRequest" } } } },
+        "responses": {
+          "201": { "description": "Order created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } },
+          "400": { "description": "Validation error or insufficient stock" }
+        }
+      }
+    },
+    "/api/v1/orders/{id}": {
+      "get": {
+        "summary": "Get order by ID",
+        "operationId": "getOrderById",
+        "tags": ["Orders"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Order found (includes enriched product details)" },
+          "404": { "description": "Order not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete order",
+        "operationId": "deleteOrder",
+        "tags": ["Orders"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "204": { "description": "Order deleted" },
+          "400": { "description": "Can only delete pending/cancelled orders" },
+          "404": { "description": "Order not found" }
+        }
+      }
+    },
+    "/api/v1/orders/{id}/status": {
+      "patch": {
+        "summary": "Update order status",
+        "operationId": "updateOrderStatus",
+        "tags": ["Orders"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "enum": ["pending", "processing", "shipped", "delivered", "cancelled"] } }, "required": ["status"] } } } },
+        "responses": {
+          "200": { "description": "Status updated (stock restored if cancelled)" },
+          "400": { "description": "Invalid status" },
+          "404": { "description": "Order not found" }
+        }
+      }
+    },
+    "/api/v1/orders/{id}/payment": {
+      "patch": {
+        "summary": "Update payment status",
+        "operationId": "updatePaymentStatus",
+        "tags": ["Orders"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "refunded"] } }, "required": ["paymentStatus"] } } } },
+        "responses": {
+          "200": { "description": "Payment status updated" },
+          "404": { "description": "Order not found" }
+        }
+      }
+    },
+    "/api/v1/reviews": {
+      "get": {
+        "summary": "Get all reviews",
+        "operationId": "getAllReviews",
+        "tags": ["Reviews"],
+        "parameters": [
+          { "name": "productId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "userId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "minRating", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 5 } },
+          { "name": "verified", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } }
+        ],
+        "responses": {
+          "200": { "description": "Paginated review list" }
+        }
+      },
+      "post": {
+        "summary": "Create a review",
+        "operationId": "createReview",
+        "tags": ["Reviews"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateReviewRequest" } } } },
+        "responses": {
+          "201": { "description": "Review created (auto-verified if user purchased product)" },
+          "400": { "description": "User already reviewed this product" }
+        }
+      }
+    },
+    "/api/v1/reviews/{id}": {
+      "get": {
+        "summary": "Get review by ID",
+        "operationId": "getReviewById",
+        "tags": ["Reviews"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Review found" },
+          "404": { "description": "Review not found" }
+        }
+      },
+      "put": {
+        "summary": "Update review",
+        "operationId": "updateReview",
+        "tags": ["Reviews"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateReviewRequest" } } } },
+        "responses": {
+          "200": { "description": "Review updated" },
+          "404": { "description": "Review not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete review",
+        "operationId": "deleteReview",
+        "tags": ["Reviews"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "204": { "description": "Review deleted (product rating recalculated)" },
+          "404": { "description": "Review not found" }
+        }
+      }
+    },
+    "/api/v1/reviews/{id}/helpful": {
+      "post": {
+        "summary": "Mark review as helpful",
+        "operationId": "markReviewHelpful",
+        "tags": ["Reviews"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Helpful count incremented" },
+          "404": { "description": "Review not found" }
+        }
+      }
+    },
+    "/api/v1/cart/{userId}": {
+      "get": {
+        "summary": "Get user's cart",
+        "operationId": "getCart",
+        "tags": ["Cart"],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Cart with calculated totals", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Cart" } } } },
+          "404": { "description": "User not found" }
+        }
+      },
+      "delete": {
+        "summary": "Clear user's cart",
+        "operationId": "clearCart",
+        "tags": ["Cart"],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "204": { "description": "Cart cleared" }
+        }
+      }
+    },
+    "/api/v1/cart/{userId}/items": {
+      "post": {
+        "summary": "Add item to cart",
+        "operationId": "addToCart",
+        "tags": ["Cart"],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "productId": { "type": "integer" }, "quantity": { "type": "integer", "default": 1 } }, "required": ["productId"] } } } },
+        "responses": {
+          "200": { "description": "Item added/quantity updated" },
+          "400": { "description": "Insufficient stock" },
+          "404": { "description": "User or product not found" }
+        }
+      }
+    },
+    "/api/v1/cart/{userId}/items/{productId}": {
+      "put": {
+        "summary": "Update cart item quantity",
+        "operationId": "updateCartItem",
+        "tags": ["Cart"],
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "productId", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "quantity": { "type": "integer" } }, "required": ["quantity"] } } } },
+        "responses": {
+          "200": { "description": "Quantity updated (removed if 0)" },
+          "404": { "description": "Cart or item not found" }
+        }
+      },
+      "delete": {
+        "summary": "Remove item from cart",
+        "operationId": "removeFromCart",
+        "tags": ["Cart"],
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "productId", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Item removed" },
+          "404": { "description": "Cart not found" }
+        }
+      }
+    },
+    "/api/v1/coupons": {
+      "get": {
+        "summary": "Get all coupons",
+        "operationId": "getAllCoupons",
+        "tags": ["Coupons"],
+        "responses": {
+          "200": { "description": "Coupon list", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Coupon" } } } } }
+        }
+      },
+      "post": {
+        "summary": "Create a coupon",
+        "operationId": "createCoupon",
+        "tags": ["Coupons"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateCouponRequest" } } } },
+        "responses": {
+          "201": { "description": "Coupon created" },
+          "400": { "description": "Code already exists" }
+        }
+      }
+    },
+    "/api/v1/coupons/validate": {
+      "post": {
+        "summary": "Validate a coupon",
+        "operationId": "validateCoupon",
+        "tags": ["Coupons"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "code": { "type": "string" }, "subtotal": { "type": "number" } }, "required": ["code", "subtotal"] } } } },
+        "responses": {
+          "200": { "description": "Coupon valid", "content": { "application/json": { "schema": { "type": "object", "properties": { "valid": { "type": "boolean" }, "discount": { "type": "number" }, "finalTotal": { "type": "number" } } } } } },
+          "400": { "description": "Invalid coupon (expired, limit reached, min purchase not met)" }
+        }
+      }
+    },
+    "/api/v1/coupons/{code}": {
+      "get": {
+        "summary": "Get coupon by code",
+        "operationId": "getCouponByCode",
+        "tags": ["Coupons"],
+        "parameters": [{ "name": "code", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Coupon found" },
+          "404": { "description": "Coupon not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete coupon",
+        "operationId": "deleteCoupon",
+        "tags": ["Coupons"],
+        "parameters": [{ "name": "code", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "204": { "description": "Coupon deleted" },
+          "404": { "description": "Coupon not found" }
+        }
+      }
+    },
+    "/api/v1/users/{userId}/addresses": {
+      "get": {
+        "summary": "Get user's addresses",
+        "operationId": "getUserAddresses",
+        "tags": ["Addresses"],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "User addresses" },
+          "404": { "description": "User not found" }
+        }
+      },
+      "post": {
+        "summary": "Add address for user",
+        "operationId": "addUserAddress",
+        "tags": ["Addresses"],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAddressRequest" } } } },
+        "responses": {
+          "201": { "description": "Address added" },
+          "404": { "description": "User not found" }
+        }
+      }
+    },
+    "/api/v1/addresses/{id}": {
+      "get": {
+        "summary": "Get address by ID",
+        "operationId": "getAddressById",
+        "tags": ["Addresses"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Address found" },
+          "404": { "description": "Address not found" }
+        }
+      },
+      "put": {
+        "summary": "Update address",
+        "operationId": "updateAddress",
+        "tags": ["Addresses"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateAddressRequest" } } } },
+        "responses": {
+          "200": { "description": "Address updated" },
+          "404": { "description": "Address not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete address",
+        "operationId": "deleteAddress",
+        "tags": ["Addresses"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "204": { "description": "Address deleted" },
+          "404": { "description": "Address not found" }
+        }
+      }
+    },
+    "/api/v1/users/{userId}/wishlist": {
+      "get": {
+        "summary": "Get user's wishlist",
+        "operationId": "getUserWishlist",
+        "tags": ["Wishlist"],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Wishlist products", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Product" } } } } },
+          "404": { "description": "User not found" }
+        }
+      },
+      "post": {
+        "summary": "Add to wishlist",
+        "operationId": "addToWishlist",
+        "tags": ["Wishlist"],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "productId": { "type": "integer" } }, "required": ["productId"] } } } },
+        "responses": {
+          "201": { "description": "Added to wishlist" },
+          "400": { "description": "Already in wishlist" },
+          "404": { "description": "User or product not found" }
+        }
+      }
+    },
+    "/api/v1/users/{userId}/wishlist/{productId}": {
+      "delete": {
+        "summary": "Remove from wishlist",
+        "operationId": "removeFromWishlist",
+        "tags": ["Wishlist"],
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "productId", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "204": { "description": "Removed from wishlist" },
+          "404": { "description": "Product not in wishlist" }
+        }
+      }
+    },
+    "/api/v1/users/{userId}/notifications": {
+      "get": {
+        "summary": "Get user notifications",
+        "operationId": "getUserNotifications",
+        "tags": ["Notifications"],
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "unreadOnly", "in": "query", "schema": { "type": "boolean" } }
+        ],
+        "responses": {
+          "200": { "description": "Notifications with unread count" },
+          "404": { "description": "User not found" }
+        }
+      }
+    },
+    "/api/v1/users/{userId}/notifications/mark-all-read": {
+      "post": {
+        "summary": "Mark all notifications as read",
+        "operationId": "markAllNotificationsRead",
+        "tags": ["Notifications"],
+        "parameters": [{ "name": "userId", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "All notifications marked read" },
+          "404": { "description": "User not found" }
+        }
+      }
+    },
+    "/api/v1/notifications/{id}/read": {
+      "patch": {
+        "summary": "Mark notification as read",
+        "operationId": "markNotificationRead",
+        "tags": ["Notifications"],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Notification marked read" },
+          "404": { "description": "Notification not found" }
+        }
+      }
+    },
+    "/api/v1/stats/overview": {
+      "get": {
+        "summary": "Get platform statistics overview",
+        "operationId": "getStatsOverview",
+        "tags": ["Stats"],
+        "responses": {
+          "200": { "description": "Platform statistics", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatsOverview" } } } }
+        }
+      }
+    },
+    "/api/v1/stats/top-products": {
+      "get": {
+        "summary": "Get top products",
+        "operationId": "getTopProducts",
+        "tags": ["Stats"],
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 5 } },
+          { "name": "sortBy", "in": "query", "schema": { "type": "string", "enum": ["rating", "reviews", "price"] } }
+        ],
+        "responses": {
+          "200": { "description": "Top products" }
+        }
+      }
+    },
+    "/api/v1/stats/orders-by-status": {
+      "get": {
+        "summary": "Get order counts by status",
+        "operationId": "getOrdersByStatus",
+        "tags": ["Stats"],
+        "responses": {
+          "200": { "description": "Order status breakdown" }
+        }
+      }
+    },
+    "/api/v1/stats/low-stock": {
+      "get": {
+        "summary": "Get low stock products",
+        "operationId": "getLowStockProducts",
+        "tags": ["Stats"],
+        "parameters": [{ "name": "threshold", "in": "query", "schema": { "type": "integer", "default": 10 } }],
+        "responses": {
+          "200": { "description": "Products below stock threshold" }
+        }
+      }
+    },
+    "/api/v1/admin/reset-test-data": {
+      "post": {
+        "summary": "Reset all test data",
+        "operationId": "resetTestData",
+        "tags": ["Admin"],
+        "responses": {
+          "200": { "description": "Data reset with counts" }
+        }
+      }
+    },
+    "/api/v1/admin/data-counts": {
+      "get": {
+        "summary": "Get data counts",
+        "operationId": "getDataCounts",
+        "tags": ["Admin"],
+        "responses": {
+          "200": { "description": "Counts of all entities" }
         }
       }
     },
     "/api/v1/users/reset-test-data": {
       "post": {
-        "summary": "Reset test data",
-        "description": "Reset the user database to initial demo data. Useful for test isolation and demonstration purposes.",
-        "operationId": "resetTestData",
+        "summary": "Reset test data (legacy)",
+        "operationId": "resetTestDataLegacy",
         "tags": ["Admin"],
         "responses": {
-          "200": {
-            "description": "Test data reset successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResetResponse"
-                }
-              }
-            }
-          }
+          "200": { "description": "Data reset" }
         }
       }
     },
     "/health": {
       "get": {
         "summary": "Health check",
-        "description": "Get application health status and metrics",
         "operationId": "healthCheck",
         "tags": ["System"],
         "responses": {
-          "200": {
-            "description": "Service is healthy",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          }
+          "200": { "description": "Service healthy", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } } }
         }
       }
     }
@@ -332,213 +862,307 @@
       "User": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Unique user identifier",
-            "example": 1
-          },
-          "name": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 50,
-            "description": "User's full name",
-            "example": "John Doe"
-          },
-          "email": {
-            "type": "string",
-            "format": "email",
-            "description": "User's email address",
-            "example": "john.doe@example.com"
-          },
-          "age": {
-            "type": "integer",
-            "minimum": 18,
-            "maximum": 100,
-            "description": "User's age",
-            "example": 30,
-            "nullable": true
-          },
-          "department": {
-            "type": "string",
-            "description": "User's department",
-            "example": "Engineering",
-            "nullable": true
-          }
-        },
-        "required": ["id", "name", "email"]
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "age": { "type": "integer", "nullable": true },
+          "department": { "type": "string", "nullable": true },
+          "role": { "type": "string", "enum": ["admin", "user", "manager"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "isActive": { "type": "boolean" }
+        }
       },
       "CreateUserRequest": {
         "type": "object",
+        "required": ["name", "email"],
         "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 50,
-            "description": "User's full name",
-            "example": "Alice Johnson"
-          },
-          "email": {
-            "type": "string",
-            "format": "email",
-            "description": "User's email address",
-            "example": "alice.johnson@example.com"
-          },
-          "age": {
-            "type": "integer",
-            "minimum": 18,
-            "maximum": 100,
-            "description": "User's age",
-            "example": 25
-          },
-          "department": {
-            "type": "string",
-            "description": "User's department",
-            "example": "Marketing"
-          }
-        },
-        "required": ["name", "email"]
-      },
-      "UpdateUserRequest": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 2,
-            "maxLength": 50,
-            "description": "User's full name",
-            "example": "John Smith"
-          },
-          "email": {
-            "type": "string",
-            "format": "email",
-            "description": "User's email address",
-            "example": "john.smith@example.com"
-          },
-          "age": {
-            "type": "integer",
-            "minimum": 18,
-            "maximum": 100,
-            "description": "User's age",
-            "example": 31
-          },
-          "department": {
-            "type": "string",
-            "description": "User's department",
-            "example": "Engineering"
-          }
-        },
-        "required": ["name", "email"]
-      },
-      "ValidationError": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "string",
-            "example": "Validation failed"
-          },
-          "message": {
-            "type": "string",
-            "example": "Email already exists"
-          },
-          "details": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "type": { "type": "string" },
-                "msg": { "type": "string" },
-                "path": { "type": "string" },
-                "location": { "type": "string" }
-              }
-            }
-          }
+          "name": { "type": "string", "minLength": 2, "maxLength": 50 },
+          "email": { "type": "string", "format": "email" },
+          "age": { "type": "integer", "minimum": 18, "maximum": 100 },
+          "department": { "type": "string" },
+          "role": { "type": "string", "enum": ["admin", "user", "manager"] }
         }
       },
-      "NotFoundError": {
+      "PatchUserRequest": {
         "type": "object",
         "properties": {
-          "error": {
-            "type": "string",
-            "example": "User not found"
-          },
-          "message": {
-            "type": "string",
-            "example": "User with ID 123 does not exist"
-          }
+          "name": { "type": "string" },
+          "email": { "type": "string" },
+          "age": { "type": "integer" },
+          "department": { "type": "string" },
+          "role": { "type": "string" },
+          "isActive": { "type": "boolean" }
         }
       },
-      "ServerError": {
+      "Product": {
         "type": "object",
         "properties": {
-          "error": {
-            "type": "string",
-            "example": "Internal Server Error"
-          },
-          "message": {
-            "type": "string",
-            "example": "Simulated server error for testing"
-          }
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "price": { "type": "number" },
+          "categoryId": { "type": "integer" },
+          "stock": { "type": "integer" },
+          "sku": { "type": "string" },
+          "brand": { "type": "string" },
+          "rating": { "type": "number" },
+          "reviewCount": { "type": "integer" },
+          "isActive": { "type": "boolean" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "tags": { "type": "array", "items": { "type": "string" } }
         }
       },
-      "ResetResponse": {
+      "CreateProductRequest": {
+        "type": "object",
+        "required": ["name", "price", "categoryId"],
+        "properties": {
+          "name": { "type": "string", "minLength": 2, "maxLength": 100 },
+          "description": { "type": "string", "maxLength": 1000 },
+          "price": { "type": "number", "minimum": 0.01 },
+          "categoryId": { "type": "integer" },
+          "stock": { "type": "integer", "minimum": 0 },
+          "sku": { "type": "string" },
+          "brand": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "PatchProductRequest": {
         "type": "object",
         "properties": {
-          "message": {
-            "type": "string",
-            "example": "Test data reset successfully"
-          },
-          "userCount": {
-            "type": "integer",
-            "example": 3
-          },
-          "availableIds": {
-            "type": "array",
-            "items": {
-              "type": "integer"
-            },
-            "example": [1, 2, 3]
-          }
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "price": { "type": "number" },
+          "categoryId": { "type": "integer" },
+          "stock": { "type": "integer" },
+          "isActive": { "type": "boolean" }
+        }
+      },
+      "Category": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "slug": { "type": "string" },
+          "parentId": { "type": "integer", "nullable": true },
+          "isActive": { "type": "boolean" }
+        }
+      },
+      "CategoryTree": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Category" },
+          { "type": "object", "properties": { "children": { "type": "array", "items": { "$ref": "#/components/schemas/CategoryTree" } } } }
+        ]
+      },
+      "CreateCategoryRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 2, "maxLength": 50 },
+          "description": { "type": "string", "maxLength": 500 },
+          "parentId": { "type": "integer" }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "userId": { "type": "integer" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/OrderItem" } },
+          "subtotal": { "type": "number" },
+          "discount": { "type": "number" },
+          "tax": { "type": "number" },
+          "total": { "type": "number" },
+          "status": { "type": "string", "enum": ["pending", "processing", "shipped", "delivered", "cancelled"] },
+          "paymentMethod": { "type": "string", "enum": ["credit_card", "paypal", "bank_transfer"] },
+          "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "refunded"] },
+          "couponCode": { "type": "string", "nullable": true },
+          "shippingAddress": { "$ref": "#/components/schemas/ShippingAddress" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "OrderItem": {
+        "type": "object",
+        "properties": {
+          "productId": { "type": "integer" },
+          "quantity": { "type": "integer" },
+          "price": { "type": "number" }
+        }
+      },
+      "CreateOrderRequest": {
+        "type": "object",
+        "required": ["userId", "items", "shippingAddress", "paymentMethod"],
+        "properties": {
+          "userId": { "type": "integer" },
+          "items": { "type": "array", "items": { "type": "object", "properties": { "productId": { "type": "integer" }, "quantity": { "type": "integer", "minimum": 1 } }, "required": ["productId", "quantity"] } },
+          "shippingAddress": { "$ref": "#/components/schemas/ShippingAddress" },
+          "paymentMethod": { "type": "string", "enum": ["credit_card", "paypal", "bank_transfer"] },
+          "couponCode": { "type": "string" }
+        }
+      },
+      "ShippingAddress": {
+        "type": "object",
+        "properties": {
+          "street": { "type": "string" },
+          "city": { "type": "string" },
+          "state": { "type": "string" },
+          "zipCode": { "type": "string" },
+          "country": { "type": "string" }
+        }
+      },
+      "Review": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "productId": { "type": "integer" },
+          "userId": { "type": "integer" },
+          "rating": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "title": { "type": "string" },
+          "comment": { "type": "string" },
+          "isVerified": { "type": "boolean" },
+          "helpfulCount": { "type": "integer" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateReviewRequest": {
+        "type": "object",
+        "required": ["productId", "userId", "rating", "title"],
+        "properties": {
+          "productId": { "type": "integer" },
+          "userId": { "type": "integer" },
+          "rating": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "title": { "type": "string", "minLength": 2, "maxLength": 100 },
+          "comment": { "type": "string", "maxLength": 2000 }
+        }
+      },
+      "UpdateReviewRequest": {
+        "type": "object",
+        "properties": {
+          "rating": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "title": { "type": "string" },
+          "comment": { "type": "string" }
+        }
+      },
+      "Cart": {
+        "type": "object",
+        "properties": {
+          "userId": { "type": "integer" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/CartItem" } },
+          "subtotal": { "type": "number" },
+          "itemCount": { "type": "integer" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CartItem": {
+        "type": "object",
+        "properties": {
+          "productId": { "type": "integer" },
+          "quantity": { "type": "integer" },
+          "price": { "type": "number" },
+          "name": { "type": "string" },
+          "total": { "type": "number" }
+        }
+      },
+      "Coupon": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "string" },
+          "discount": { "type": "number" },
+          "type": { "type": "string", "enum": ["percentage", "fixed"] },
+          "minPurchase": { "type": "number" },
+          "maxUses": { "type": "integer" },
+          "usedCount": { "type": "integer" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "isActive": { "type": "boolean" }
+        }
+      },
+      "CreateCouponRequest": {
+        "type": "object",
+        "required": ["code", "discount", "type"],
+        "properties": {
+          "code": { "type": "string" },
+          "discount": { "type": "number" },
+          "type": { "type": "string", "enum": ["percentage", "fixed"] },
+          "minPurchase": { "type": "number", "default": 0 },
+          "maxUses": { "type": "integer", "default": 100 },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Address": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "userId": { "type": "integer" },
+          "label": { "type": "string" },
+          "street": { "type": "string" },
+          "city": { "type": "string" },
+          "state": { "type": "string" },
+          "zipCode": { "type": "string" },
+          "country": { "type": "string" },
+          "isDefault": { "type": "boolean" }
+        }
+      },
+      "CreateAddressRequest": {
+        "type": "object",
+        "required": ["street", "city", "state", "zipCode", "country"],
+        "properties": {
+          "label": { "type": "string" },
+          "street": { "type": "string" },
+          "city": { "type": "string" },
+          "state": { "type": "string" },
+          "zipCode": { "type": "string" },
+          "country": { "type": "string" },
+          "isDefault": { "type": "boolean" }
+        }
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "userId": { "type": "integer" },
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "message": { "type": "string" },
+          "isRead": { "type": "boolean" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "StatsOverview": {
+        "type": "object",
+        "properties": {
+          "users": { "type": "object", "properties": { "total": { "type": "integer" }, "active": { "type": "integer" } } },
+          "products": { "type": "object", "properties": { "total": { "type": "integer" }, "active": { "type": "integer" } } },
+          "orders": { "type": "object", "properties": { "total": { "type": "integer" }, "revenue": { "type": "number" }, "averageValue": { "type": "number" } } },
+          "reviews": { "type": "object", "properties": { "total": { "type": "integer" }, "averageRating": { "type": "number" } } }
+        }
+      },
+      "Pagination": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "total": { "type": "integer" },
+          "totalPages": { "type": "integer" }
         }
       },
       "HealthResponse": {
         "type": "object",
         "properties": {
-          "status": {
-            "type": "string",
-            "example": "healthy"
-          },
-          "timestamp": {
-            "type": "string",
-            "format": "date-time",
-            "example": "2024-01-15T10:30:00.000Z"
-          },
-          "uptime": {
-            "type": "number",
-            "description": "Server uptime in seconds",
-            "example": 3600.5
-          },
-          "users": {
-            "type": "integer",
-            "description": "Current number of users in the system",
-            "example": 3
-          }
+          "status": { "type": "string" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "uptime": { "type": "number" },
+          "counts": { "type": "object", "properties": { "users": { "type": "integer" }, "products": { "type": "integer" }, "orders": { "type": "integer" } } }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "message": { "type": "string" },
+          "details": { "type": "array", "items": { "type": "object" } }
         }
       }
     }
-  },
-  "tags": [
-    {
-      "name": "Users",
-      "description": "User management operations - CRUD operations for managing user data"
-    },
-    {
-      "name": "Admin",
-      "description": "Administrative operations - System management and testing utilities"
-    },
-    {
-      "name": "System",
-      "description": "System operations - Health checks and monitoring"
-    }
-  ]
+  }
 }
