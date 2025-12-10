@@ -5,9 +5,11 @@ A comprehensive REST API built with Node.js and Express, simulating a full e-com
 ## Features
 
 - 🚀 **Express.js** - Fast, unopinionated web framework
+- 🔐 **JWT Authentication** - Complete auth flow with access/refresh tokens
+- 🛡️ **Role-Based Access Control** - Admin, Manager, and User roles
 - 🛒 **Full E-Commerce** - Users, Products, Orders, Reviews, Cart, Wishlist, Coupons
 - ✅ **Input Validation** - Comprehensive request validation using express-validator
-- 🔒 **Security** - Security headers with Helmet.js
+- 🔒 **Security** - Security headers with Helmet.js, password hashing with bcrypt
 - 📊 **Analytics** - Statistics and reporting endpoints
 - 🌐 **CORS Support** - Cross-Origin Resource Sharing enabled
 - 📖 **API Documentation** - Interactive Swagger UI with OpenAPI 3.0
@@ -44,7 +46,21 @@ The API will be available at `http://localhost:3000`
 http://localhost:3000/api/v1
 ```
 
-### Users (9 endpoints)
+### Authentication (9 endpoints)
+
+| Method | Endpoint | Auth Required | Description |
+|--------|----------|---------------|-------------|
+| POST | `/auth/register` | No | Register a new user |
+| POST | `/auth/login` | No | Login and get tokens |
+| POST | `/auth/logout` | Yes | Logout and invalidate token |
+| POST | `/auth/logout-all` | Yes | Logout from all devices |
+| POST | `/auth/refresh` | No | Refresh access token |
+| GET | `/auth/me` | Yes | Get current user profile |
+| PATCH | `/auth/me` | Yes | Update current user profile |
+| POST | `/auth/change-password` | Yes | Change password |
+| GET | `/auth/verify` | Yes | Verify token validity |
+
+### Users (9 endpoints) 🔒
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -181,6 +197,63 @@ http://localhost:3000/api/v1
 Once the server is running, visit:
 - **Swagger UI**: http://localhost:3000/api-docs
 - **OpenAPI Spec**: [openapi.json](./openapi.json)
+
+## Authentication
+
+### Demo Credentials
+
+All demo users have the same password: `password123`
+
+| Email | Role | Can Access |
+|-------|------|------------|
+| john.doe@example.com | admin | Everything |
+| alice.brown@example.com | manager | Products, Orders, Stats |
+| jane.smith@example.com | user | Own resources only |
+| bob.johnson@example.com | user | Own resources only |
+
+### JWT Tokens
+
+- **Access Token**: Valid for 15 minutes, used in `Authorization: Bearer <token>` header
+- **Refresh Token**: Valid for 7 days, used to get new access tokens
+
+### Authentication Flow
+
+```bash
+# 1. Login to get tokens
+curl -X POST http://localhost:3000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"john.doe@example.com","password":"password123"}'
+
+# Response includes accessToken and refreshToken
+
+# 2. Use access token for protected routes
+curl http://localhost:3000/api/v1/users \
+  -H "Authorization: Bearer <accessToken>"
+
+# 3. Refresh token when access token expires
+curl -X POST http://localhost:3000/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refreshToken":"<refreshToken>"}'
+
+# 4. Logout (invalidates token)
+curl -X POST http://localhost:3000/api/v1/auth/logout \
+  -H "Authorization: Bearer <accessToken>"
+```
+
+### Access Control Matrix
+
+| Resource | Public | User | Manager | Admin |
+|----------|--------|------|---------|-------|
+| Products (read) | ✅ | ✅ | ✅ | ✅ |
+| Products (write) | ❌ | ❌ | ✅ | ✅ |
+| Categories (read) | ✅ | ✅ | ✅ | ✅ |
+| Categories (write) | ❌ | ❌ | ❌ | ✅ |
+| Orders (own) | ❌ | ✅ | ✅ | ✅ |
+| Orders (all) | ❌ | ❌ | ✅ | ✅ |
+| Users (own) | ❌ | ✅ | ✅ | ✅ |
+| Users (all) | ❌ | ❌ | ✅ | ✅ |
+| Stats | ❌ | ❌ | ✅ | ✅ |
+| Coupons (manage) | ❌ | ❌ | ❌ | ✅ |
 
 ## Example Usage
 
@@ -371,8 +444,32 @@ curl -X POST http://localhost:3000/api/v1/admin/reset-test-data
 - **201**: Created
 - **204**: No Content (successful deletion)
 - **400**: Bad Request (validation errors, business rule violations)
+- **401**: Unauthorized (missing or invalid token)
+- **403**: Forbidden (insufficient permissions / role)
 - **404**: Not Found
 - **500**: Internal Server Error
+
+### Authentication Error Responses
+
+```json
+// 401 - No token provided
+{ "error": "Authentication required", "message": "No token provided" }
+
+// 401 - Token expired
+{ "error": "Token expired", "message": "Access token has expired" }
+
+// 401 - Token revoked (after logout)
+{ "error": "Token revoked", "message": "This token has been invalidated" }
+
+// 403 - Invalid token
+{ "error": "Invalid token", "message": "Token verification failed" }
+
+// 403 - Insufficient role
+{ "error": "Forbidden", "message": "This action requires one of these roles: admin, manager" }
+
+// 403 - Resource ownership
+{ "error": "Forbidden", "message": "You can only access your own resources" }
+```
 
 ## Environment Variables
 

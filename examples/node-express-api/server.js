@@ -4,9 +4,20 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const { body, param, query, validationResult } = require('express-validator');
 const swaggerUi = require('swagger-ui-express');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ============================================
+// JWT CONFIGURATION
+// ============================================
+
+const JWT_SECRET = process.env.JWT_SECRET || 'spectra-demo-secret-key-change-in-production';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'spectra-demo-refresh-secret-key';
+const ACCESS_TOKEN_EXPIRY = '15m';
+const REFRESH_TOKEN_EXPIRY = '7d';
 
 // Middleware
 app.use(helmet());
@@ -28,6 +39,8 @@ let coupons = new Map();
 let addresses = new Map();
 let wishlists = new Map();
 let notifications = new Map();
+let refreshTokens = new Set(); // Store valid refresh tokens
+let blacklistedTokens = new Set(); // Store invalidated access tokens
 
 let nextUserId = 1;
 let nextProductId = 1;
@@ -53,13 +66,18 @@ function initializeDemoData() {
     addresses.clear();
     wishlists.clear();
     notifications.clear();
+    refreshTokens.clear();
+    blacklistedTokens.clear();
 
-    // Initialize Users
-    users.set(1, { id: 1, name: 'John Doe', email: 'john.doe@example.com', age: 30, department: 'Engineering', role: 'admin', createdAt: '2024-01-01T10:00:00Z', isActive: true });
-    users.set(2, { id: 2, name: 'Jane Smith', email: 'jane.smith@example.com', age: 28, department: 'Marketing', role: 'user', createdAt: '2024-01-02T10:00:00Z', isActive: true });
-    users.set(3, { id: 3, name: 'Bob Johnson', email: 'bob.johnson@example.com', age: 35, department: 'Engineering', role: 'user', createdAt: '2024-01-03T10:00:00Z', isActive: true });
-    users.set(4, { id: 4, name: 'Alice Brown', email: 'alice.brown@example.com', age: 32, department: 'Sales', role: 'manager', createdAt: '2024-01-04T10:00:00Z', isActive: true });
-    users.set(5, { id: 5, name: 'Charlie Wilson', email: 'charlie.wilson@example.com', age: 45, department: 'HR', role: 'user', createdAt: '2024-01-05T10:00:00Z', isActive: false });
+    // Default password for all demo users is "password123" (hashed)
+    const defaultPasswordHash = bcrypt.hashSync('password123', 10);
+
+    // Initialize Users with passwords
+    users.set(1, { id: 1, name: 'John Doe', email: 'john.doe@example.com', password: defaultPasswordHash, age: 30, department: 'Engineering', role: 'admin', createdAt: '2024-01-01T10:00:00Z', isActive: true });
+    users.set(2, { id: 2, name: 'Jane Smith', email: 'jane.smith@example.com', password: defaultPasswordHash, age: 28, department: 'Marketing', role: 'user', createdAt: '2024-01-02T10:00:00Z', isActive: true });
+    users.set(3, { id: 3, name: 'Bob Johnson', email: 'bob.johnson@example.com', password: defaultPasswordHash, age: 35, department: 'Engineering', role: 'user', createdAt: '2024-01-03T10:00:00Z', isActive: true });
+    users.set(4, { id: 4, name: 'Alice Brown', email: 'alice.brown@example.com', password: defaultPasswordHash, age: 32, department: 'Sales', role: 'manager', createdAt: '2024-01-04T10:00:00Z', isActive: true });
+    users.set(5, { id: 5, name: 'Charlie Wilson', email: 'charlie.wilson@example.com', password: defaultPasswordHash, age: 45, department: 'HR', role: 'user', createdAt: '2024-01-05T10:00:00Z', isActive: false });
     nextUserId = 6;
 
     // Initialize Categories
@@ -298,14 +316,356 @@ const applyCoupon = (code, subtotal) => {
     return { valid: true, discount, coupon };
 };
 
+// Helper to strip password from user object
+const sanitizeUser = (user) => {
+    if (!user) return null;
+    const { password, ...safeUser } = user;
+    return safeUser;
+};
+
+// Generate JWT tokens
+const generateTokens = (user) => {
+    const accessToken = jwt.sign(
+        { userId: user.id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: ACCESS_TOKEN_EXPIRY }
+    );
+    const refreshToken = jwt.sign(
+        { userId: user.id, type: 'refresh' },
+        JWT_REFRESH_SECRET,
+        { expiresIn: REFRESH_TOKEN_EXPIRY }
+    );
+    refreshTokens.add(refreshToken);
+    return { accessToken, refreshToken };
+};
+
 // ============================================
-// USER ROUTES
+// AUTHENTICATION MIDDLEWARE
 // ============================================
 
-app.get('/api/v1/users', (req, res) => {
+// Verify JWT token
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+    if (!token) {
+        return res.status(401).json({ error: 'Authentication required', message: 'No token provided' });
+    }
+
+    if (blacklistedTokens.has(token)) {
+        return res.status(401).json({ error: 'Token revoked', message: 'This token has been invalidated' });
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+        if (err) {
+            if (err.name === 'TokenExpiredError') {
+                return res.status(401).json({ error: 'Token expired', message: 'Access token has expired' });
+            }
+            return res.status(403).json({ error: 'Invalid token', message: 'Token verification failed' });
+        }
+        
+        const user = users.get(decoded.userId);
+        if (!user) {
+            return res.status(401).json({ error: 'User not found', message: 'User associated with token no longer exists' });
+        }
+        if (!user.isActive) {
+            return res.status(403).json({ error: 'Account disabled', message: 'Your account has been deactivated' });
+        }
+        
+        req.user = decoded;
+    req.token = token;
+    next();
+    });
+};
+
+// Optional authentication - doesn't fail if no token
+const optionalAuth = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        req.user = null;
+        return next();
+    }
+
+    if (blacklistedTokens.has(token)) {
+        req.user = null;
+        return next();
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+        if (err) {
+            req.user = null;
+        } else {
+            req.user = decoded;
+        }
+        next();
+    });
+};
+
+// Role-based authorization
+const requireRole = (...allowedRoles) => {
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+        if (!allowedRoles.includes(req.user.role)) {
+            return res.status(403).json({ 
+                error: 'Forbidden', 
+                message: `This action requires one of these roles: ${allowedRoles.join(', ')}` 
+            });
+        }
+        next();
+    };
+};
+
+// Check if user owns the resource or is admin
+const requireOwnerOrAdmin = (userIdParam = 'id') => {
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({ error: 'Authentication required' });
+        }
+        const resourceUserId = parseInt(req.params[userIdParam] || req.params.userId);
+        if (req.user.userId !== resourceUserId && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Forbidden', message: 'You can only access your own resources' });
+        }
+        next();
+    };
+};
+
+// Validation for auth endpoints
+const validateRegister = [
+    body('name').isLength({ min: 2, max: 50 }).withMessage('Name must be between 2 and 50 characters'),
+    body('email').isEmail().withMessage('Email must be valid'),
+    body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+    body('age').optional().isInt({ min: 18, max: 100 }),
+    body('department').optional().isString()
+];
+
+const validateLogin = [
+    body('email').isEmail().withMessage('Email must be valid'),
+    body('password').notEmpty().withMessage('Password is required')
+];
+
+const validateChangePassword = [
+    body('currentPassword').notEmpty().withMessage('Current password is required'),
+    body('newPassword').isLength({ min: 6 }).withMessage('New password must be at least 6 characters')
+];
+
+// ============================================
+// AUTHENTICATION ROUTES
+// ============================================
+
+// Register new user
+app.post('/api/v1/auth/register', validateRegister, handleValidationErrors, async (req, res) => {
+    console.log('🔐 [NODE-API] POST /api/v1/auth/register');
+    const { name, email, password, age, department } = req.body;
+
+    if (!isEmailUnique(email)) {
+        return res.status(400).json({ error: 'Registration failed', message: 'Email already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const id = nextUserId++;
+    const newUser = {
+        id, name, email, password: hashedPassword,
+        age: age || null, department: department || null,
+        role: 'user', createdAt: new Date().toISOString(), isActive: true
+    };
+    users.set(id, newUser);
+
+    const tokens = generateTokens(newUser);
+    console.log(`✅ [NODE-API] User registered: ${email}`);
+
+    res.status(201).json({
+        message: 'Registration successful',
+        user: sanitizeUser(newUser),
+        ...tokens
+    });
+});
+
+// Login
+app.post('/api/v1/auth/login', validateLogin, handleValidationErrors, async (req, res) => {
+    console.log('🔐 [NODE-API] POST /api/v1/auth/login');
+    const { email, password } = req.body;
+
+    // Find user by email
+    let foundUser = null;
+    for (const user of users.values()) {
+        if (user.email === email) {
+            foundUser = user;
+            break;
+        }
+    }
+
+    if (!foundUser) {
+        console.log(`❌ [NODE-API] Login failed: User not found - ${email}`);
+        return res.status(401).json({ error: 'Authentication failed', message: 'Invalid email or password' });
+    }
+
+    if (!foundUser.isActive) {
+        console.log(`❌ [NODE-API] Login failed: Account disabled - ${email}`);
+        return res.status(403).json({ error: 'Account disabled', message: 'Your account has been deactivated' });
+    }
+
+    const validPassword = await bcrypt.compare(password, foundUser.password);
+    if (!validPassword) {
+        console.log(`❌ [NODE-API] Login failed: Invalid password - ${email}`);
+        return res.status(401).json({ error: 'Authentication failed', message: 'Invalid email or password' });
+    }
+
+    const tokens = generateTokens(foundUser);
+    console.log(`✅ [NODE-API] Login successful: ${email}`);
+
+    res.json({
+        message: 'Login successful',
+        user: sanitizeUser(foundUser),
+        ...tokens
+    });
+});
+
+// Refresh token
+app.post('/api/v1/auth/refresh', (req, res) => {
+    console.log('🔐 [NODE-API] POST /api/v1/auth/refresh');
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+        return res.status(400).json({ error: 'Refresh token required' });
+    }
+
+    if (!refreshTokens.has(refreshToken)) {
+        return res.status(403).json({ error: 'Invalid refresh token', message: 'Token not found or already used' });
+    }
+
+    jwt.verify(refreshToken, JWT_REFRESH_SECRET, (err, decoded) => {
+        if (err) {
+            refreshTokens.delete(refreshToken);
+            return res.status(403).json({ error: 'Invalid refresh token', message: 'Token verification failed' });
+        }
+
+        const user = users.get(decoded.userId);
+        if (!user || !user.isActive) {
+            refreshTokens.delete(refreshToken);
+            return res.status(403).json({ error: 'User not found or disabled' });
+        }
+
+        // Remove old refresh token and generate new tokens
+        refreshTokens.delete(refreshToken);
+        const tokens = generateTokens(user);
+        console.log(`✅ [NODE-API] Token refreshed for user: ${user.email}`);
+
+        res.json({
+            message: 'Token refreshed successfully',
+            ...tokens
+        });
+    });
+});
+
+// Logout
+app.post('/api/v1/auth/logout', authenticateToken, (req, res) => {
+    console.log('🔐 [NODE-API] POST /api/v1/auth/logout');
+    
+    // Blacklist the current access token
+    blacklistedTokens.add(req.token);
+    
+    // Remove refresh token if provided
+    const { refreshToken } = req.body;
+    if (refreshToken) {
+        refreshTokens.delete(refreshToken);
+    }
+
+    console.log(`✅ [NODE-API] Logout successful for user: ${req.user.email}`);
+    res.json({ message: 'Logout successful' });
+});
+
+// Logout from all devices
+app.post('/api/v1/auth/logout-all', authenticateToken, (req, res) => {
+    console.log('🔐 [NODE-API] POST /api/v1/auth/logout-all');
+    
+    // Blacklist current token
+    blacklistedTokens.add(req.token);
+    
+    // Note: In a real app, you'd track all tokens per user
+    // For demo, we'll just acknowledge the request
+    console.log(`✅ [NODE-API] Logout from all devices for user: ${req.user.email}`);
+    res.json({ message: 'Logged out from all devices' });
+});
+
+// Get current user profile
+app.get('/api/v1/auth/me', authenticateToken, (req, res) => {
+    console.log('🔐 [NODE-API] GET /api/v1/auth/me');
+    
+    const user = users.get(req.user.userId);
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json(sanitizeUser(user));
+});
+
+// Update current user profile
+app.patch('/api/v1/auth/me', authenticateToken, (req, res) => {
+    console.log('🔐 [NODE-API] PATCH /api/v1/auth/me');
+    
+    const user = users.get(req.user.userId);
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { name, age, department } = req.body;
+    
+    // Don't allow changing email, password, or role through this endpoint
+    if (name) user.name = name;
+    if (age !== undefined) user.age = age;
+    if (department !== undefined) user.department = department;
+    
+    users.set(user.id, user);
+    res.json(sanitizeUser(user));
+});
+
+// Change password
+app.post('/api/v1/auth/change-password', authenticateToken, validateChangePassword, handleValidationErrors, async (req, res) => {
+    console.log('🔐 [NODE-API] POST /api/v1/auth/change-password');
+    
+    const user = users.get(req.user.userId);
+    if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+    }
+
+    const { currentPassword, newPassword } = req.body;
+    
+    const validPassword = await bcrypt.compare(currentPassword, user.password);
+    if (!validPassword) {
+        return res.status(400).json({ error: 'Invalid password', message: 'Current password is incorrect' });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    users.set(user.id, user);
+    
+    // Invalidate current token (force re-login)
+    blacklistedTokens.add(req.token);
+    
+    console.log(`✅ [NODE-API] Password changed for user: ${req.user.email}`);
+    res.json({ message: 'Password changed successfully. Please login again.' });
+});
+
+// Verify token (useful for frontend to check if token is still valid)
+app.get('/api/v1/auth/verify', authenticateToken, (req, res) => {
+    console.log('🔐 [NODE-API] GET /api/v1/auth/verify');
+    res.json({ 
+        valid: true, 
+        user: { userId: req.user.userId, email: req.user.email, role: req.user.role }
+    });
+});
+
+// ============================================
+// USER ROUTES (Admin/Manager access for most)
+// ============================================
+
+app.get('/api/v1/users', authenticateToken, requireRole('admin', 'manager'), (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/users');
     const { department, role, isActive, page = 1, limit = 10 } = req.query;
-    let userList = Array.from(users.values());
+    let userList = Array.from(users.values()).map(sanitizeUser);
     
     if (department) userList = userList.filter(u => u.department?.toLowerCase() === department.toLowerCase());
     if (role) userList = userList.filter(u => u.role === role);
@@ -318,32 +678,38 @@ app.get('/api/v1/users', (req, res) => {
     res.json({ data: paginatedUsers, pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / limit) } });
 });
 
-app.get('/api/v1/users/:id', validateId, handleValidationErrors, (req, res) => {
+app.get('/api/v1/users/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] GET /api/v1/users/${id}`);
+    
+    // Users can only view themselves unless admin/manager
+    if (req.user.userId !== id && !['admin', 'manager'].includes(req.user.role)) {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only view your own profile' });
+    }
     
     if (id === 999) return res.status(500).json({ error: 'Internal Server Error', message: 'Simulated server error' });
     
     const user = users.get(id);
     if (!user) return res.status(404).json({ error: 'User not found', message: `User with ID ${id} does not exist` });
     
-    res.json(user);
+    res.json(sanitizeUser(user));
 });
 
-app.post('/api/v1/users', validateUser, handleValidationErrors, (req, res) => {
+app.post('/api/v1/users', authenticateToken, requireRole('admin'), validateUser, handleValidationErrors, async (req, res) => {
     console.log('🔍 [NODE-API] POST /api/v1/users');
-    const { name, email, age, department, role = 'user' } = req.body;
+    const { name, email, password, age, department, role = 'user' } = req.body;
     
     if (!isEmailUnique(email)) return res.status(400).json({ error: 'Validation failed', message: 'Email already exists' });
     
     const id = nextUserId++;
-    const newUser = { id, name, email, age: age || null, department: department || null, role, createdAt: new Date().toISOString(), isActive: true };
+    const hashedPassword = password ? await bcrypt.hash(password, 10) : await bcrypt.hash('password123', 10);
+    const newUser = { id, name, email, password: hashedPassword, age: age || null, department: department || null, role, createdAt: new Date().toISOString(), isActive: true };
     users.set(id, newUser);
     
-    res.status(201).json(newUser);
+    res.status(201).json(sanitizeUser(newUser));
 });
 
-app.put('/api/v1/users/:id', validateId, validateUser, handleValidationErrors, (req, res) => {
+app.put('/api/v1/users/:id', authenticateToken, requireRole('admin'), validateId, validateUser, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] PUT /api/v1/users/${id}`);
     
@@ -356,45 +722,63 @@ app.put('/api/v1/users/:id', validateId, validateUser, handleValidationErrors, (
     const updatedUser = { ...existingUser, name, email, age: age || existingUser.age, department: department || existingUser.department, role: role || existingUser.role };
     users.set(id, updatedUser);
     
-    res.json(updatedUser);
+    res.json(sanitizeUser(updatedUser));
 });
 
-app.patch('/api/v1/users/:id', validateId, handleValidationErrors, (req, res) => {
+app.patch('/api/v1/users/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] PATCH /api/v1/users/${id}`);
+    
+    // Users can only update themselves, admins can update anyone
+    if (req.user.userId !== id && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only update your own profile' });
+    }
     
     const existingUser = users.get(id);
     if (!existingUser) return res.status(404).json({ error: 'User not found', message: `User with ID ${id} does not exist` });
     
     const updates = req.body;
+    // Non-admins cannot change role or isActive
+    if (req.user.role !== 'admin') {
+        delete updates.role;
+        delete updates.isActive;
+    }
+    delete updates.password; // Password changes through /auth/change-password
+    
     if (updates.email && !isEmailUnique(updates.email, id)) return res.status(400).json({ error: 'Validation failed', message: 'Email already exists' });
     
     const updatedUser = { ...existingUser, ...updates };
     users.set(id, updatedUser);
     
-    res.json(updatedUser);
+    res.json(sanitizeUser(updatedUser));
 });
 
-app.delete('/api/v1/users/:id', validateId, handleValidationErrors, (req, res) => {
+app.delete('/api/v1/users/:id', authenticateToken, requireRole('admin'), validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] DELETE /api/v1/users/${id}`);
     
+    if (req.user.userId === id) return res.status(400).json({ error: 'Cannot delete yourself' });
     if (!users.has(id)) return res.status(404).json({ error: 'User not found', message: `User with ID ${id} does not exist` });
     
     users.delete(id);
     res.status(204).send();
 });
 
-app.get('/api/v1/users/department/:department', (req, res) => {
+app.get('/api/v1/users/department/:department', authenticateToken, requireRole('admin', 'manager'), (req, res) => {
     const department = req.params.department;
     console.log(`🔍 [NODE-API] GET /api/v1/users/department/${department}`);
-    const departmentUsers = Array.from(users.values()).filter(u => u.department?.toLowerCase() === department.toLowerCase());
+    const departmentUsers = Array.from(users.values()).filter(u => u.department?.toLowerCase() === department.toLowerCase()).map(sanitizeUser);
     res.json(departmentUsers);
 });
 
-app.get('/api/v1/users/:id/orders', validateId, handleValidationErrors, (req, res) => {
+app.get('/api/v1/users/:id/orders', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const userId = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] GET /api/v1/users/${userId}/orders`);
+    
+    // Users can only see their own orders unless admin
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only view your own orders' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -402,7 +786,7 @@ app.get('/api/v1/users/:id/orders', validateId, handleValidationErrors, (req, re
     res.json(userOrders);
 });
 
-app.get('/api/v1/users/:id/reviews', validateId, handleValidationErrors, (req, res) => {
+app.get('/api/v1/users/:id/reviews', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const userId = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] GET /api/v1/users/${userId}/reviews`);
     
@@ -413,10 +797,10 @@ app.get('/api/v1/users/:id/reviews', validateId, handleValidationErrors, (req, r
 });
 
 // ============================================
-// PRODUCT ROUTES
+// PRODUCT ROUTES (Public read, Admin/Manager write)
 // ============================================
 
-app.get('/api/v1/products', (req, res) => {
+app.get('/api/v1/products', optionalAuth, (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/products');
     const { categoryId, brand, minPrice, maxPrice, inStock, search, sortBy = 'createdAt', order = 'desc', page = 1, limit = 10 } = req.query;
     let productList = Array.from(products.values()).filter(p => p.isActive);
@@ -474,7 +858,7 @@ app.get('/api/v1/products/:id', validateId, handleValidationErrors, (req, res) =
     res.json(product);
 });
 
-app.post('/api/v1/products', validateProduct, handleValidationErrors, (req, res) => {
+app.post('/api/v1/products', authenticateToken, requireRole('admin', 'manager'), validateProduct, handleValidationErrors, (req, res) => {
     console.log('🔍 [NODE-API] POST /api/v1/products');
     const { name, description, price, categoryId, stock = 0, sku, brand, tags } = req.body;
     
@@ -487,7 +871,7 @@ app.post('/api/v1/products', validateProduct, handleValidationErrors, (req, res)
     res.status(201).json(newProduct);
 });
 
-app.put('/api/v1/products/:id', validateId, validateProduct, handleValidationErrors, (req, res) => {
+app.put('/api/v1/products/:id', authenticateToken, requireRole('admin', 'manager'), validateId, validateProduct, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] PUT /api/v1/products/${id}`);
     
@@ -503,7 +887,7 @@ app.put('/api/v1/products/:id', validateId, validateProduct, handleValidationErr
     res.json(updatedProduct);
 });
 
-app.patch('/api/v1/products/:id', validateId, handleValidationErrors, (req, res) => {
+app.patch('/api/v1/products/:id', authenticateToken, requireRole('admin', 'manager'), validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] PATCH /api/v1/products/${id}`);
     
@@ -519,7 +903,7 @@ app.patch('/api/v1/products/:id', validateId, handleValidationErrors, (req, res)
     res.json(updatedProduct);
 });
 
-app.delete('/api/v1/products/:id', validateId, handleValidationErrors, (req, res) => {
+app.delete('/api/v1/products/:id', authenticateToken, requireRole('admin'), validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] DELETE /api/v1/products/${id}`);
     
@@ -539,7 +923,7 @@ app.get('/api/v1/products/:id/reviews', validateId, handleValidationErrors, (req
     res.json(productReviews);
 });
 
-app.patch('/api/v1/products/:id/stock', validateId, handleValidationErrors, (req, res) => {
+app.patch('/api/v1/products/:id/stock', authenticateToken, requireRole('admin', 'manager'), validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     const { adjustment } = req.body;
     console.log(`🔍 [NODE-API] PATCH /api/v1/products/${id}/stock`);
@@ -557,7 +941,7 @@ app.patch('/api/v1/products/:id/stock', validateId, handleValidationErrors, (req
 });
 
 // ============================================
-// CATEGORY ROUTES
+// CATEGORY ROUTES (Public read, Admin write)
 // ============================================
 
 app.get('/api/v1/categories', (req, res) => {
@@ -592,7 +976,7 @@ app.get('/api/v1/categories/:id', validateId, handleValidationErrors, (req, res)
     res.json(category);
 });
 
-app.post('/api/v1/categories', validateCategory, handleValidationErrors, (req, res) => {
+app.post('/api/v1/categories', authenticateToken, requireRole('admin'), validateCategory, handleValidationErrors, (req, res) => {
     console.log('🔍 [NODE-API] POST /api/v1/categories');
     const { name, description, parentId } = req.body;
     
@@ -606,7 +990,7 @@ app.post('/api/v1/categories', validateCategory, handleValidationErrors, (req, r
     res.status(201).json(newCategory);
 });
 
-app.put('/api/v1/categories/:id', validateId, validateCategory, handleValidationErrors, (req, res) => {
+app.put('/api/v1/categories/:id', authenticateToken, requireRole('admin'), validateId, validateCategory, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] PUT /api/v1/categories/${id}`);
     
@@ -624,7 +1008,7 @@ app.put('/api/v1/categories/:id', validateId, validateCategory, handleValidation
     res.json(updatedCategory);
 });
 
-app.delete('/api/v1/categories/:id', validateId, handleValidationErrors, (req, res) => {
+app.delete('/api/v1/categories/:id', authenticateToken, requireRole('admin'), validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] DELETE /api/v1/categories/${id}`);
     
@@ -653,15 +1037,21 @@ app.get('/api/v1/categories/:id/products', validateId, handleValidationErrors, (
 });
 
 // ============================================
-// ORDER ROUTES
+// ORDER ROUTES (Authenticated)
 // ============================================
 
-app.get('/api/v1/orders', (req, res) => {
+app.get('/api/v1/orders', authenticateToken, (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/orders');
     const { userId, status, startDate, endDate, page = 1, limit = 10 } = req.query;
     let orderList = Array.from(orders.values());
     
-    if (userId) orderList = orderList.filter(o => o.userId === parseInt(userId));
+    // Non-admins can only see their own orders
+    if (req.user.role !== 'admin') {
+        orderList = orderList.filter(o => o.userId === req.user.userId);
+    } else if (userId) {
+        orderList = orderList.filter(o => o.userId === parseInt(userId));
+    }
+    
     if (status) orderList = orderList.filter(o => o.status === status);
     if (startDate) orderList = orderList.filter(o => new Date(o.createdAt) >= new Date(startDate));
     if (endDate) orderList = orderList.filter(o => new Date(o.createdAt) <= new Date(endDate));
@@ -675,12 +1065,17 @@ app.get('/api/v1/orders', (req, res) => {
     res.json({ data: paginatedOrders, pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / limit) } });
 });
 
-app.get('/api/v1/orders/:id', validateId, handleValidationErrors, (req, res) => {
+app.get('/api/v1/orders/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] GET /api/v1/orders/${id}`);
     
     const order = orders.get(id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
+    
+    // Users can only view their own orders
+    if (req.user.role !== 'admin' && order.userId !== req.user.userId) {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only view your own orders' });
+    }
     
     // Enrich with product details
     const enrichedItems = order.items.map(item => {
@@ -691,11 +1086,14 @@ app.get('/api/v1/orders/:id', validateId, handleValidationErrors, (req, res) => 
     res.json({ ...order, items: enrichedItems });
 });
 
-app.post('/api/v1/orders', validateOrder, handleValidationErrors, (req, res) => {
+app.post('/api/v1/orders', authenticateToken, validateOrder, handleValidationErrors, (req, res) => {
     console.log('🔍 [NODE-API] POST /api/v1/orders');
     const { userId, items, shippingAddress, paymentMethod, couponCode } = req.body;
     
-    if (!users.has(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+    // Users can only create orders for themselves (unless admin)
+    const orderUserId = req.user.role === 'admin' ? userId : req.user.userId;
+    
+    if (!users.has(orderUserId)) return res.status(400).json({ error: 'Invalid user ID' });
     
     // Validate items and calculate totals
     let subtotal = 0;
@@ -730,7 +1128,7 @@ app.post('/api/v1/orders', validateOrder, handleValidationErrors, (req, res) => 
     
     const id = nextOrderId++;
     const newOrder = {
-        id, userId, items: orderItems, subtotal: Math.round(subtotal * 100) / 100, discount: Math.round(discount * 100) / 100,
+        id, userId: orderUserId, items: orderItems, subtotal: Math.round(subtotal * 100) / 100, discount: Math.round(discount * 100) / 100,
         tax: Math.round(tax * 100) / 100, total: Math.round(total * 100) / 100, status: 'pending', paymentMethod,
         paymentStatus: 'pending', couponCode, shippingAddress, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
     };
@@ -739,7 +1137,7 @@ app.post('/api/v1/orders', validateOrder, handleValidationErrors, (req, res) => 
     res.status(201).json(newOrder);
 });
 
-app.patch('/api/v1/orders/:id/status', validateId, handleValidationErrors, (req, res) => {
+app.patch('/api/v1/orders/:id/status', authenticateToken, requireRole('admin', 'manager'), validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     const { status } = req.body;
     console.log(`🔍 [NODE-API] PATCH /api/v1/orders/${id}/status`);
@@ -765,7 +1163,7 @@ app.patch('/api/v1/orders/:id/status', validateId, handleValidationErrors, (req,
     res.json(order);
 });
 
-app.patch('/api/v1/orders/:id/payment', validateId, handleValidationErrors, (req, res) => {
+app.patch('/api/v1/orders/:id/payment', authenticateToken, requireRole('admin', 'manager'), validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     const { paymentStatus } = req.body;
     console.log(`🔍 [NODE-API] PATCH /api/v1/orders/${id}/payment`);
@@ -783,12 +1181,17 @@ app.patch('/api/v1/orders/:id/payment', validateId, handleValidationErrors, (req
     res.json(order);
 });
 
-app.delete('/api/v1/orders/:id', validateId, handleValidationErrors, (req, res) => {
+app.delete('/api/v1/orders/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] DELETE /api/v1/orders/${id}`);
     
     const order = orders.get(id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
+    
+    // Users can only delete their own pending orders, admins can delete any pending/cancelled
+    if (req.user.role !== 'admin' && order.userId !== req.user.userId) {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only delete your own orders' });
+    }
     if (!['pending', 'cancelled'].includes(order.status)) return res.status(400).json({ error: 'Can only delete pending or cancelled orders' });
     
     orders.delete(id);
@@ -796,7 +1199,7 @@ app.delete('/api/v1/orders/:id', validateId, handleValidationErrors, (req, res) 
 });
 
 // ============================================
-// REVIEW ROUTES
+// REVIEW ROUTES (Public read, authenticated write)
 // ============================================
 
 app.get('/api/v1/reviews', (req, res) => {
@@ -828,16 +1231,16 @@ app.get('/api/v1/reviews/:id', validateId, handleValidationErrors, (req, res) =>
     res.json(review);
 });
 
-app.post('/api/v1/reviews', validateReview, handleValidationErrors, (req, res) => {
+app.post('/api/v1/reviews', authenticateToken, validateReview, handleValidationErrors, (req, res) => {
     console.log('🔍 [NODE-API] POST /api/v1/reviews');
-    const { productId, userId, rating, title, comment } = req.body;
+    const { productId, rating, title, comment } = req.body;
+    const userId = req.user.userId; // Use authenticated user
     
     if (!products.has(productId)) return res.status(400).json({ error: 'Product not found' });
-    if (!users.has(userId)) return res.status(400).json({ error: 'User not found' });
     
     // Check if user already reviewed this product
     const existingReview = Array.from(reviews.values()).find(r => r.productId === productId && r.userId === userId);
-    if (existingReview) return res.status(400).json({ error: 'User has already reviewed this product' });
+    if (existingReview) return res.status(400).json({ error: 'You have already reviewed this product' });
     
     // Check if user has purchased the product
     const userOrders = Array.from(orders.values()).filter(o => o.userId === userId && o.status === 'delivered');
@@ -857,12 +1260,17 @@ app.post('/api/v1/reviews', validateReview, handleValidationErrors, (req, res) =
     res.status(201).json(newReview);
 });
 
-app.put('/api/v1/reviews/:id', validateId, handleValidationErrors, (req, res) => {
+app.put('/api/v1/reviews/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] PUT /api/v1/reviews/${id}`);
     
     const existingReview = reviews.get(id);
     if (!existingReview) return res.status(404).json({ error: 'Review not found' });
+    
+    // Users can only edit their own reviews (admins can edit any)
+    if (req.user.role !== 'admin' && existingReview.userId !== req.user.userId) {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only edit your own reviews' });
+    }
     
     const { rating, title, comment } = req.body;
     if (rating && (rating < 1 || rating > 5)) return res.status(400).json({ error: 'Rating must be between 1 and 5' });
@@ -879,12 +1287,17 @@ app.put('/api/v1/reviews/:id', validateId, handleValidationErrors, (req, res) =>
     res.json(updatedReview);
 });
 
-app.delete('/api/v1/reviews/:id', validateId, handleValidationErrors, (req, res) => {
+app.delete('/api/v1/reviews/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] DELETE /api/v1/reviews/${id}`);
     
     const review = reviews.get(id);
     if (!review) return res.status(404).json({ error: 'Review not found' });
+    
+    // Users can only delete their own reviews (admins can delete any)
+    if (req.user.role !== 'admin' && review.userId !== req.user.userId) {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only delete your own reviews' });
+    }
     
     reviews.delete(id);
     
@@ -902,12 +1315,17 @@ app.delete('/api/v1/reviews/:id', validateId, handleValidationErrors, (req, res)
     res.status(204).send();
 });
 
-app.post('/api/v1/reviews/:id/helpful', validateId, handleValidationErrors, (req, res) => {
+app.post('/api/v1/reviews/:id/helpful', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] POST /api/v1/reviews/${id}/helpful`);
     
     const review = reviews.get(id);
     if (!review) return res.status(404).json({ error: 'Review not found' });
+    
+    // Can't mark own review as helpful
+    if (review.userId === req.user.userId) {
+        return res.status(400).json({ error: 'Cannot mark your own review as helpful' });
+    }
     
     review.helpfulCount++;
     reviews.set(id, review);
@@ -916,12 +1334,17 @@ app.post('/api/v1/reviews/:id/helpful', validateId, handleValidationErrors, (req
 });
 
 // ============================================
-// CART ROUTES
+// CART ROUTES (Authenticated, own cart only)
 // ============================================
 
-app.get('/api/v1/cart/:userId', (req, res) => {
+app.get('/api/v1/cart/:userId', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     console.log(`🔍 [NODE-API] GET /api/v1/cart/${userId}`);
+    
+    // Users can only access their own cart
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only access your own cart' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -931,10 +1354,14 @@ app.get('/api/v1/cart/:userId', (req, res) => {
     res.json({ ...cart, items: itemDetails, subtotal: Math.round(subtotal * 100) / 100, itemCount: cart.items.reduce((sum, i) => sum + i.quantity, 0) });
 });
 
-app.post('/api/v1/cart/:userId/items', (req, res) => {
+app.post('/api/v1/cart/:userId/items', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     const { productId, quantity = 1 } = req.body;
     console.log(`🔍 [NODE-API] POST /api/v1/cart/${userId}/items`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only modify your own cart' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -959,11 +1386,15 @@ app.post('/api/v1/cart/:userId/items', (req, res) => {
     res.json({ ...cart, items: itemDetails, subtotal: Math.round(subtotal * 100) / 100 });
 });
 
-app.put('/api/v1/cart/:userId/items/:productId', (req, res) => {
+app.put('/api/v1/cart/:userId/items/:productId', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     const productId = parseInt(req.params.productId);
     const { quantity } = req.body;
     console.log(`🔍 [NODE-API] PUT /api/v1/cart/${userId}/items/${productId}`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only modify your own cart' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -989,10 +1420,14 @@ app.put('/api/v1/cart/:userId/items/:productId', (req, res) => {
     res.json({ ...cart, items: itemDetails, subtotal: Math.round(subtotal * 100) / 100 });
 });
 
-app.delete('/api/v1/cart/:userId/items/:productId', (req, res) => {
+app.delete('/api/v1/cart/:userId/items/:productId', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     const productId = parseInt(req.params.productId);
     console.log(`🔍 [NODE-API] DELETE /api/v1/cart/${userId}/items/${productId}`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only modify your own cart' });
+    }
     
     const cart = carts.get(userId);
     if (!cart) return res.status(404).json({ error: 'Cart not found' });
@@ -1004,19 +1439,23 @@ app.delete('/api/v1/cart/:userId/items/:productId', (req, res) => {
     res.status(204).send();
 });
 
-app.delete('/api/v1/cart/:userId', (req, res) => {
+app.delete('/api/v1/cart/:userId', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     console.log(`🔍 [NODE-API] DELETE /api/v1/cart/${userId}`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only clear your own cart' });
+    }
     
     carts.delete(userId);
     res.status(204).send();
 });
 
 // ============================================
-// COUPON ROUTES
+// COUPON ROUTES (Admin for management, authenticated for validate)
 // ============================================
 
-app.get('/api/v1/coupons', (req, res) => {
+app.get('/api/v1/coupons', authenticateToken, requireRole('admin', 'manager'), (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/coupons');
     const couponList = Array.from(coupons.values());
     res.json(couponList);
@@ -1029,10 +1468,11 @@ app.get('/api/v1/coupons/:code', (req, res) => {
     const coupon = coupons.get(code);
     if (!coupon) return res.status(404).json({ error: 'Coupon not found' });
     
-    res.json(coupon);
+    // Public endpoint but hide sensitive data
+    res.json({ code: coupon.code, discount: coupon.discount, type: coupon.type, minPurchase: coupon.minPurchase, isActive: coupon.isActive });
 });
 
-app.post('/api/v1/coupons/validate', (req, res) => {
+app.post('/api/v1/coupons/validate', authenticateToken, (req, res) => {
     const { code, subtotal } = req.body;
     console.log(`🔍 [NODE-API] POST /api/v1/coupons/validate`);
     
@@ -1044,7 +1484,7 @@ app.post('/api/v1/coupons/validate', (req, res) => {
     res.json({ valid: true, discount: Math.round(result.discount * 100) / 100, finalTotal: Math.round((subtotal - result.discount) * 100) / 100 });
 });
 
-app.post('/api/v1/coupons', (req, res) => {
+app.post('/api/v1/coupons', authenticateToken, requireRole('admin'), (req, res) => {
     console.log('🔍 [NODE-API] POST /api/v1/coupons');
     const { code, discount, type, minPurchase = 0, maxUses = 100, expiresAt } = req.body;
     
@@ -1058,7 +1498,7 @@ app.post('/api/v1/coupons', (req, res) => {
     res.status(201).json(newCoupon);
 });
 
-app.delete('/api/v1/coupons/:code', (req, res) => {
+app.delete('/api/v1/coupons/:code', authenticateToken, requireRole('admin'), (req, res) => {
     const code = req.params.code.toUpperCase();
     console.log(`🔍 [NODE-API] DELETE /api/v1/coupons/${code}`);
     
@@ -1069,12 +1509,16 @@ app.delete('/api/v1/coupons/:code', (req, res) => {
 });
 
 // ============================================
-// ADDRESS ROUTES
+// ADDRESS ROUTES (Authenticated, own addresses only)
 // ============================================
 
-app.get('/api/v1/users/:userId/addresses', (req, res) => {
+app.get('/api/v1/users/:userId/addresses', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     console.log(`🔍 [NODE-API] GET /api/v1/users/${userId}/addresses`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only view your own addresses' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -1082,19 +1526,27 @@ app.get('/api/v1/users/:userId/addresses', (req, res) => {
     res.json(userAddresses);
 });
 
-app.get('/api/v1/addresses/:id', validateId, handleValidationErrors, (req, res) => {
+app.get('/api/v1/addresses/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] GET /api/v1/addresses/${id}`);
     
     const address = addresses.get(id);
     if (!address) return res.status(404).json({ error: 'Address not found' });
     
+    if (req.user.userId !== address.userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only view your own addresses' });
+    }
+    
     res.json(address);
 });
 
-app.post('/api/v1/users/:userId/addresses', (req, res) => {
+app.post('/api/v1/users/:userId/addresses', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     console.log(`🔍 [NODE-API] POST /api/v1/users/${userId}/addresses`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only add addresses to your own account' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -1115,12 +1567,16 @@ app.post('/api/v1/users/:userId/addresses', (req, res) => {
     res.status(201).json(newAddress);
 });
 
-app.put('/api/v1/addresses/:id', validateId, handleValidationErrors, (req, res) => {
+app.put('/api/v1/addresses/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] PUT /api/v1/addresses/${id}`);
     
     const existingAddress = addresses.get(id);
     if (!existingAddress) return res.status(404).json({ error: 'Address not found' });
+    
+    if (req.user.userId !== existingAddress.userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only update your own addresses' });
+    }
     
     const { label, street, city, state, zipCode, country, isDefault } = req.body;
     
@@ -1137,23 +1593,32 @@ app.put('/api/v1/addresses/:id', validateId, handleValidationErrors, (req, res) 
     res.json(updatedAddress);
 });
 
-app.delete('/api/v1/addresses/:id', validateId, handleValidationErrors, (req, res) => {
+app.delete('/api/v1/addresses/:id', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] DELETE /api/v1/addresses/${id}`);
     
-    if (!addresses.has(id)) return res.status(404).json({ error: 'Address not found' });
+    const address = addresses.get(id);
+    if (!address) return res.status(404).json({ error: 'Address not found' });
+    
+    if (req.user.userId !== address.userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only delete your own addresses' });
+    }
     
     addresses.delete(id);
     res.status(204).send();
 });
 
 // ============================================
-// WISHLIST ROUTES
+// WISHLIST ROUTES (Authenticated, own wishlist only)
 // ============================================
 
-app.get('/api/v1/users/:userId/wishlist', (req, res) => {
+app.get('/api/v1/users/:userId/wishlist', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     console.log(`🔍 [NODE-API] GET /api/v1/users/${userId}/wishlist`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only view your own wishlist' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -1163,10 +1628,14 @@ app.get('/api/v1/users/:userId/wishlist', (req, res) => {
     res.json(wishlistProducts);
 });
 
-app.post('/api/v1/users/:userId/wishlist', (req, res) => {
+app.post('/api/v1/users/:userId/wishlist', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     const { productId } = req.body;
     console.log(`🔍 [NODE-API] POST /api/v1/users/${userId}/wishlist`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only modify your own wishlist' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     if (!products.has(productId)) return res.status(400).json({ error: 'Product not found' });
@@ -1180,10 +1649,14 @@ app.post('/api/v1/users/:userId/wishlist', (req, res) => {
     res.status(201).json({ message: 'Added to wishlist', productId });
 });
 
-app.delete('/api/v1/users/:userId/wishlist/:productId', (req, res) => {
+app.delete('/api/v1/users/:userId/wishlist/:productId', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     const productId = parseInt(req.params.productId);
     console.log(`🔍 [NODE-API] DELETE /api/v1/users/${userId}/wishlist/${productId}`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only modify your own wishlist' });
+    }
     
     let wishlist = wishlists.get(userId) || [];
     if (!wishlist.includes(productId)) return res.status(404).json({ error: 'Product not in wishlist' });
@@ -1195,13 +1668,17 @@ app.delete('/api/v1/users/:userId/wishlist/:productId', (req, res) => {
 });
 
 // ============================================
-// NOTIFICATION ROUTES
+// NOTIFICATION ROUTES (Authenticated, own notifications only)
 // ============================================
 
-app.get('/api/v1/users/:userId/notifications', (req, res) => {
+app.get('/api/v1/users/:userId/notifications', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     const { unreadOnly } = req.query;
     console.log(`🔍 [NODE-API] GET /api/v1/users/${userId}/notifications`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only view your own notifications' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -1213,12 +1690,16 @@ app.get('/api/v1/users/:userId/notifications', (req, res) => {
     res.json({ notifications: userNotifications, unreadCount: userNotifications.filter(n => !n.isRead).length });
 });
 
-app.patch('/api/v1/notifications/:id/read', validateId, handleValidationErrors, (req, res) => {
+app.patch('/api/v1/notifications/:id/read', authenticateToken, validateId, handleValidationErrors, (req, res) => {
     const id = parseInt(req.params.id);
     console.log(`🔍 [NODE-API] PATCH /api/v1/notifications/${id}/read`);
     
     const notification = notifications.get(id);
     if (!notification) return res.status(404).json({ error: 'Notification not found' });
+    
+    if (req.user.userId !== notification.userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only mark your own notifications as read' });
+    }
     
     notification.isRead = true;
     notifications.set(id, notification);
@@ -1226,9 +1707,13 @@ app.patch('/api/v1/notifications/:id/read', validateId, handleValidationErrors, 
     res.json(notification);
 });
 
-app.post('/api/v1/users/:userId/notifications/mark-all-read', (req, res) => {
+app.post('/api/v1/users/:userId/notifications/mark-all-read', authenticateToken, (req, res) => {
     const userId = parseInt(req.params.userId);
     console.log(`🔍 [NODE-API] POST /api/v1/users/${userId}/notifications/mark-all-read`);
+    
+    if (req.user.userId !== userId && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only mark your own notifications as read' });
+    }
     
     if (!users.has(userId)) return res.status(404).json({ error: 'User not found' });
     
@@ -1240,10 +1725,10 @@ app.post('/api/v1/users/:userId/notifications/mark-all-read', (req, res) => {
 });
 
 // ============================================
-// ANALYTICS / STATS ROUTES
+// ANALYTICS / STATS ROUTES (Admin/Manager only)
 // ============================================
 
-app.get('/api/v1/stats/overview', (req, res) => {
+app.get('/api/v1/stats/overview', authenticateToken, requireRole('admin', 'manager'), (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/stats/overview');
     
     const totalUsers = users.size;
@@ -1264,7 +1749,7 @@ app.get('/api/v1/stats/overview', (req, res) => {
     });
 });
 
-app.get('/api/v1/stats/top-products', (req, res) => {
+app.get('/api/v1/stats/top-products', authenticateToken, requireRole('admin', 'manager'), (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/stats/top-products');
     const { limit = 5, sortBy = 'rating' } = req.query;
     
@@ -1277,7 +1762,7 @@ app.get('/api/v1/stats/top-products', (req, res) => {
     res.json(productList.slice(0, parseInt(limit)));
 });
 
-app.get('/api/v1/stats/orders-by-status', (req, res) => {
+app.get('/api/v1/stats/orders-by-status', authenticateToken, requireRole('admin', 'manager'), (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/stats/orders-by-status');
     
     const statusCounts = {};
@@ -1288,7 +1773,7 @@ app.get('/api/v1/stats/orders-by-status', (req, res) => {
     res.json(statusCounts);
 });
 
-app.get('/api/v1/stats/low-stock', (req, res) => {
+app.get('/api/v1/stats/low-stock', authenticateToken, requireRole('admin', 'manager'), (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/stats/low-stock');
     const { threshold = 10 } = req.query;
     
@@ -1298,7 +1783,7 @@ app.get('/api/v1/stats/low-stock', (req, res) => {
 });
 
 // ============================================
-// ADMIN / UTILITY ROUTES
+// ADMIN / UTILITY ROUTES (Admin only, except reset which is public for testing)
 // ============================================
 
 app.post('/api/v1/admin/reset-test-data', (req, res) => {
@@ -1307,12 +1792,12 @@ app.post('/api/v1/admin/reset-test-data', (req, res) => {
     res.json({ message: 'Test data reset successfully', counts: { users: users.size, products: products.size, categories: categories.size, orders: orders.size, reviews: reviews.size } });
 });
 
-app.get('/api/v1/admin/data-counts', (req, res) => {
+app.get('/api/v1/admin/data-counts', authenticateToken, requireRole('admin'), (req, res) => {
     console.log('🔍 [NODE-API] GET /api/v1/admin/data-counts');
     res.json({ users: users.size, products: products.size, categories: categories.size, orders: orders.size, reviews: reviews.size, coupons: coupons.size, addresses: addresses.size });
 });
 
-// Keep legacy endpoint for backwards compatibility
+// Keep legacy endpoint for backwards compatibility (public for testing)
 app.post('/api/v1/users/reset-test-data', (req, res) => {
     console.log('🔄 [NODE-API] RESET TEST DATA (legacy)');
     initializeDemoData();
