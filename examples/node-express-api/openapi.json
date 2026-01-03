@@ -28,7 +28,8 @@
     { "name": "Notifications", "description": "User notification management" },
     { "name": "Stats", "description": "Analytics and statistics" },
     { "name": "Admin", "description": "Administrative operations" },
-    { "name": "System", "description": "System health and status" }
+    { "name": "System", "description": "System health and status" },
+    { "name": "Uploads", "description": "File upload operations (multipart/form-data)" }
   ],
   "paths": {
     "/api/v1/users": {
@@ -846,6 +847,187 @@
         }
       }
     },
+    "/api/v1/uploads/image": {
+      "post": {
+        "summary": "Upload single image",
+        "description": "Upload a single image file using multipart/form-data. Supported formats: JPEG, PNG, GIF, WebP. Max size: 5MB.",
+        "operationId": "uploadSingleImage",
+        "tags": ["Uploads"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["image"],
+                "properties": {
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Image file to upload"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Image uploaded successfully", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadResponse" } } } },
+          "400": { "description": "Invalid file or upload error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "Authentication required" }
+        }
+      }
+    },
+    "/api/v1/uploads/images": {
+      "post": {
+        "summary": "Upload multiple images",
+        "description": "Upload multiple image files (up to 5) using multipart/form-data. Supported formats: JPEG, PNG, GIF, WebP. Max size: 5MB per file.",
+        "operationId": "uploadMultipleImages",
+        "tags": ["Uploads"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["images"],
+                "properties": {
+                  "images": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    },
+                    "description": "Image files to upload (max 5)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Images uploaded successfully", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MultipleUploadResponse" } } } },
+          "400": { "description": "Invalid files or upload error" },
+          "401": { "description": "Authentication required" }
+        }
+      }
+    },
+    "/api/v1/uploads/profile": {
+      "post": {
+        "summary": "Upload profile with images",
+        "description": "Upload profile data with avatar, cover image, and gallery images using multipart/form-data. Demonstrates mixed text and file fields.",
+        "operationId": "uploadProfile",
+        "tags": ["Uploads"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "description": "Profile name" },
+                  "bio": { "type": "string", "description": "Profile bio/description" },
+                  "website": { "type": "string", "description": "Profile website URL" },
+                  "avatar": { "type": "string", "format": "binary", "description": "Avatar image (single file)" },
+                  "coverImage": { "type": "string", "format": "binary", "description": "Cover image (single file)" },
+                  "gallery": { "type": "array", "items": { "type": "string", "format": "binary" }, "description": "Gallery images (up to 5)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Profile uploaded successfully", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileUploadResponse" } } } },
+          "400": { "description": "Invalid files or upload error" },
+          "401": { "description": "Authentication required" }
+        }
+      }
+    },
+    "/api/v1/products/{id}/image": {
+      "post": {
+        "summary": "Upload product image",
+        "description": "Upload an image for a specific product. Requires admin or manager role.",
+        "operationId": "uploadProductImage",
+        "tags": ["Uploads", "Products"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "Product ID" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["image"],
+                "properties": {
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Product image to upload"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Product image uploaded successfully", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProductImageUploadResponse" } } } },
+          "400": { "description": "Invalid file or upload error" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Admin or manager role required" },
+          "404": { "description": "Product not found" }
+        }
+      }
+    },
+    "/api/v1/uploads": {
+      "get": {
+        "summary": "List uploaded files",
+        "description": "Get a paginated list of uploaded files. Non-admin users only see their own files.",
+        "operationId": "listUploads",
+        "tags": ["Uploads"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } }
+        ],
+        "responses": {
+          "200": { "description": "List of uploaded files", "content": { "application/json": { "schema": { "type": "object", "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/UploadedFile" } }, "pagination": { "$ref": "#/components/schemas/Pagination" } } } } } },
+          "401": { "description": "Authentication required" }
+        }
+      }
+    },
+    "/api/v1/uploads/{id}": {
+      "get": {
+        "summary": "Get uploaded file info",
+        "description": "Get information about a specific uploaded file. Users can only view their own files unless admin.",
+        "operationId": "getUploadById",
+        "tags": ["Uploads"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "File information", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UploadedFile" } } } },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Access denied" },
+          "404": { "description": "File not found" }
+        }
+      },
+      "delete": {
+        "summary": "Delete uploaded file",
+        "description": "Delete an uploaded file. Users can only delete their own files unless admin.",
+        "operationId": "deleteUpload",
+        "tags": ["Uploads"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "204": { "description": "File deleted" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Access denied" },
+          "404": { "description": "File not found" }
+        }
+      }
+    },
     "/health": {
       "get": {
         "summary": "Health check",
@@ -1162,6 +1344,73 @@
           "message": { "type": "string" },
           "details": { "type": "array", "items": { "type": "object" } }
         }
+      },
+      "UploadedFile": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "filename": { "type": "string" },
+          "originalName": { "type": "string" },
+          "mimetype": { "type": "string" },
+          "size": { "type": "integer", "description": "File size in bytes" },
+          "path": { "type": "string", "description": "URL path to access the file" },
+          "uploadedBy": { "type": "integer", "description": "User ID who uploaded the file" },
+          "uploadedAt": { "type": "string", "format": "date-time" },
+          "productId": { "type": "integer", "description": "Associated product ID (if applicable)" }
+        }
+      },
+      "UploadResponse": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" },
+          "file": { "$ref": "#/components/schemas/UploadedFile" }
+        }
+      },
+      "MultipleUploadResponse": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" },
+          "files": { "type": "array", "items": { "$ref": "#/components/schemas/UploadedFile" } }
+        }
+      },
+      "ProfileUploadResponse": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" },
+          "profile": {
+            "type": "object",
+            "properties": {
+              "userId": { "type": "integer" },
+              "name": { "type": "string", "nullable": true },
+              "bio": { "type": "string", "nullable": true },
+              "website": { "type": "string", "nullable": true },
+              "files": {
+                "type": "object",
+                "properties": {
+                  "avatar": { "$ref": "#/components/schemas/UploadedFile" },
+                  "coverImage": { "$ref": "#/components/schemas/UploadedFile" },
+                  "gallery": { "type": "array", "items": { "$ref": "#/components/schemas/UploadedFile" } }
+                }
+              }
+            }
+          }
+        }
+      },
+      "ProductImageUploadResponse": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" },
+          "file": { "$ref": "#/components/schemas/UploadedFile" },
+          "product": { "$ref": "#/components/schemas/Product" }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT token obtained from /api/v1/auth/login"
       }
     }
   }

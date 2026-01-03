@@ -8,6 +8,7 @@ A comprehensive REST API built with Node.js and Express, simulating a full e-com
 - 🔐 **JWT Authentication** - Complete auth flow with access/refresh tokens
 - 🛡️ **Role-Based Access Control** - Admin, Manager, and User roles
 - 🛒 **Full E-Commerce** - Users, Products, Orders, Reviews, Cart, Wishlist, Coupons
+- 📷 **File Uploads** - Multipart/form-data support with image uploads (Multer)
 - ✅ **Input Validation** - Comprehensive request validation using express-validator
 - 🔒 **Security** - Security headers with Helmet.js, password hashing with bcrypt
 - 📊 **Analytics** - Statistics and reporting endpoints
@@ -169,6 +170,22 @@ http://localhost:3000/api/v1
 | PATCH | `/notifications/{id}/read` | Mark notification as read |
 | POST | `/users/{userId}/notifications/mark-all-read` | Mark all as read |
 
+### File Uploads (7 endpoints) 📷
+
+| Method | Endpoint | Content-Type | Description |
+|--------|----------|--------------|-------------|
+| POST | `/uploads/image` | multipart/form-data | Upload single image |
+| POST | `/uploads/images` | multipart/form-data | Upload multiple images (up to 5) |
+| POST | `/uploads/profile` | multipart/form-data | Upload profile with avatar, cover, gallery |
+| POST | `/products/{id}/image` | multipart/form-data | Upload product image |
+| GET | `/uploads` | - | List uploaded files (paginated) |
+| GET | `/uploads/{id}` | - | Get uploaded file info |
+| DELETE | `/uploads/{id}` | - | Delete uploaded file |
+
+**Supported Image Formats**: JPEG, PNG, GIF, WebP  
+**Max File Size**: 5MB per file  
+**Static Files**: Uploaded images served at `/uploads/{filename}`
+
 ### Analytics & Stats (4 endpoints)
 
 | Method | Endpoint | Description |
@@ -252,6 +269,9 @@ curl -X POST http://localhost:3000/api/v1/auth/logout \
 | Orders (all) | ❌ | ❌ | ✅ | ✅ |
 | Users (own) | ❌ | ✅ | ✅ | ✅ |
 | Users (all) | ❌ | ❌ | ✅ | ✅ |
+| File Uploads (own) | ❌ | ✅ | ✅ | ✅ |
+| File Uploads (all) | ❌ | ❌ | ❌ | ✅ |
+| Product Images | ❌ | ❌ | ✅ | ✅ |
 | Stats | ❌ | ❌ | ✅ | ✅ |
 | Coupons (manage) | ❌ | ❌ | ❌ | ✅ |
 
@@ -347,6 +367,53 @@ curl -X POST http://localhost:3000/api/v1/reviews \
 curl -X POST http://localhost:3000/api/v1/reviews/1/helpful
 ```
 
+### File Uploads (multipart/form-data)
+
+```bash
+# Upload single image
+curl -X POST http://localhost:3000/api/v1/uploads/image \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "image=@/path/to/photo.jpg"
+
+# Upload multiple images (up to 5)
+curl -X POST http://localhost:3000/api/v1/uploads/images \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "images=@/path/to/photo1.jpg" \
+  -F "images=@/path/to/photo2.jpg" \
+  -F "images=@/path/to/photo3.png"
+
+# Upload profile with mixed text and image fields
+curl -X POST http://localhost:3000/api/v1/uploads/profile \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "name=John Doe" \
+  -F "bio=Software Developer" \
+  -F "website=https://example.com" \
+  -F "avatar=@/path/to/avatar.png" \
+  -F "coverImage=@/path/to/cover.jpg" \
+  -F "gallery=@/path/to/img1.jpg" \
+  -F "gallery=@/path/to/img2.jpg"
+
+# Upload product image (requires manager/admin role)
+curl -X POST http://localhost:3000/api/v1/products/1/image \
+  -H "Authorization: Bearer <accessToken>" \
+  -F "image=@/path/to/product-photo.jpg"
+
+# List your uploaded files
+curl http://localhost:3000/api/v1/uploads \
+  -H "Authorization: Bearer <accessToken>"
+
+# Get specific file info
+curl http://localhost:3000/api/v1/uploads/1 \
+  -H "Authorization: Bearer <accessToken>"
+
+# Delete uploaded file
+curl -X DELETE http://localhost:3000/api/v1/uploads/1 \
+  -H "Authorization: Bearer <accessToken>"
+
+# Access uploaded file (public after upload)
+curl http://localhost:3000/uploads/image-1234567890-123456789.jpg
+```
+
 ## Demo Data
 
 The API initializes with comprehensive demo data:
@@ -390,6 +457,8 @@ The API initializes with comprehensive demo data:
 - **Coupon Validation**: Tests for expired, used, minimum purchase
 - **Stock Management**: Insufficient stock validation
 - **Order Cancellation**: Auto-restores stock when cancelled
+- **File Upload Validation**: Invalid file types, size limits, missing files
+- **File Ownership**: Users can only access/delete their own files
 
 ### Reset Endpoint
 
@@ -420,6 +489,16 @@ curl -X POST http://localhost:3000/api/v1/admin/reset-test-data
 4. **Category System**
    - Hierarchical with parent-child relationships
    - Prevents deletion of categories with products/subcategories
+
+5. **File Upload System**
+   - Supports single and multiple file uploads
+   - Mixed text and file fields in multipart requests
+   - File type validation (JPEG, PNG, GIF, WebP only)
+   - File size limits (5MB per file)
+   - Automatic file naming with timestamps
+   - User ownership tracking
+   - Product image association
+   - Static file serving
 
 ## Error Response Format
 

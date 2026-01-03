@@ -19,6 +19,24 @@ curl http://localhost:3000/health
 
 You should see JSON responses with demo users and health status.
 
+### 3. Test File Upload Endpoints (Optional)
+```bash
+# First, get an auth token
+TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"john.doe@example.com","password":"password123"}' | jq -r '.accessToken')
+
+# Test single image upload (create a test image first)
+echo -n -e '\xFF\xD8\xFF\xE0\x00\x10JFIF\x00' > /tmp/test.jpg
+curl -X POST http://localhost:3000/api/v1/uploads/image \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "image=@/tmp/test.jpg"
+
+# List uploaded files
+curl http://localhost:3000/api/v1/uploads \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ### 3. Run Spectra Testing
 ```bash
 # From the project root
@@ -69,3 +87,20 @@ If tests still fail:
 ✅ No connection refused errors
 ✅ Spectra generates test scenarios and Gherkin features
 ✅ URL logs show `localhost:3000` instead of `localhost:8081`
+✅ File upload endpoints accept multipart/form-data requests
+✅ Uploaded files are accessible via `/uploads/{filename}`
+
+## File Upload Testing
+
+The API now supports multipart/form-data file uploads:
+
+| Endpoint | Content-Type | Description |
+|----------|--------------|-------------|
+| `POST /api/v1/uploads/image` | multipart/form-data | Single image upload |
+| `POST /api/v1/uploads/images` | multipart/form-data | Multiple images (up to 5) |
+| `POST /api/v1/uploads/profile` | multipart/form-data | Profile with text + images |
+| `POST /api/v1/products/{id}/image` | multipart/form-data | Product image |
+
+**Supported formats**: JPEG, PNG, GIF, WebP  
+**Max size**: 5MB per file  
+**Auth required**: Yes (JWT Bearer token)

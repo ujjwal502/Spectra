@@ -6,8 +6,65 @@ const { body, param, query, validationResult } = require('express-validator');
 const swaggerUi = require('swagger-ui-express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
+
+// ============================================
+// MULTER CONFIGURATION FOR FILE UPLOADS
+// ============================================
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configure storage for uploaded files
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadsDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+// File filter for images
+const imageFileFilter = (req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowedMimes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error('Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed.'), false);
+    }
+};
+
+// Multer upload configurations
+const uploadSingle = multer({
+    storage: storage,
+    fileFilter: imageFileFilter,
+    limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
+}).single('image');
+
+const uploadMultiple = multer({
+    storage: storage,
+    fileFilter: imageFileFilter,
+    limits: { fileSize: 5 * 1024 * 1024 }
+}).array('images', 5); // Max 5 images
+
+const uploadFields = multer({
+    storage: storage,
+    fileFilter: imageFileFilter,
+    limits: { fileSize: 5 * 1024 * 1024 }
+}).fields([
+    { name: 'avatar', maxCount: 1 },
+    { name: 'coverImage', maxCount: 1 },
+    { name: 'gallery', maxCount: 5 }
+]);
 const PORT = process.env.PORT || 3000;
 
 // ============================================
@@ -39,6 +96,7 @@ let coupons = new Map();
 let addresses = new Map();
 let wishlists = new Map();
 let notifications = new Map();
+let uploadedFiles = new Map(); // Store file metadata
 let refreshTokens = new Set(); // Store valid refresh tokens
 let blacklistedTokens = new Set(); // Store invalidated access tokens
 
@@ -49,6 +107,7 @@ let nextOrderId = 1;
 let nextReviewId = 1;
 let nextAddressId = 1;
 let nextNotificationId = 1;
+let nextFileId = 1;
 
 // ============================================
 // INITIALIZE DEMO DATA
@@ -66,6 +125,7 @@ function initializeDemoData() {
     addresses.clear();
     wishlists.clear();
     notifications.clear();
+    uploadedFiles.clear();
     refreshTokens.clear();
     blacklistedTokens.clear();
 
@@ -1723,6 +1783,330 @@ app.post('/api/v1/users/:userId/notifications/mark-all-read', authenticateToken,
     
     res.json({ message: 'All notifications marked as read' });
 });
+
+// ============================================
+// FILE UPLOAD ROUTES (Multipart/Form-Data)
+// ============================================
+
+// Helper middleware to handle multer errors
+const handleMulterError = (err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ error: 'File too large', message: 'Maximum file size is 5MB' });
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+            return res.status(400).json({ error: 'Too many files', message: 'Maximum number of files exceeded' });
+        }
+        return res.status(400).json({ error: 'Upload error', message: err.message });
+    }
+    if (err) {
+        return res.status(400).json({ error: 'Upload error', message: err.message });
+    }
+    next();
+};
+
+// Upload single image
+app.post('/api/v1/uploads/image', authenticateToken, (req, res) => {
+    console.log('📷 [NODE-API] POST /api/v1/uploads/image');
+    
+    uploadSingle(req, res, (err) => {
+        if (err) {
+            if (err instanceof multer.MulterError) {
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ error: 'File too large', message: 'Maximum file size is 5MB' });
+                }
+                return res.status(400).json({ error: 'Upload error', message: err.message });
+            }
+            return res.status(400).json({ error: 'Upload error', message: err.message });
+        }
+        
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded', message: 'Please provide an image file in the "image" field' });
+        }
+        
+        const fileId = nextFileId++;
+        const fileData = {
+            id: fileId,
+            filename: req.file.filename,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype,
+            size: req.file.size,
+            path: `/uploads/${req.file.filename}`,
+            uploadedBy: req.user.userId,
+            uploadedAt: new Date().toISOString()
+        };
+        
+        uploadedFiles.set(fileId, fileData);
+        console.log(`✅ [NODE-API] Image uploaded: ${req.file.filename}`);
+        
+        res.status(201).json({
+            message: 'Image uploaded successfully',
+            file: fileData
+        });
+    });
+});
+
+// Upload multiple images
+app.post('/api/v1/uploads/images', authenticateToken, (req, res) => {
+    console.log('📷 [NODE-API] POST /api/v1/uploads/images');
+    
+    uploadMultiple(req, res, (err) => {
+        if (err) {
+            if (err instanceof multer.MulterError) {
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ error: 'File too large', message: 'Maximum file size is 5MB per file' });
+                }
+                if (err.code === 'LIMIT_FILE_COUNT') {
+                    return res.status(400).json({ error: 'Too many files', message: 'Maximum 5 images allowed' });
+                }
+                return res.status(400).json({ error: 'Upload error', message: err.message });
+            }
+            return res.status(400).json({ error: 'Upload error', message: err.message });
+        }
+        
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ error: 'No files uploaded', message: 'Please provide image files in the "images" field' });
+        }
+        
+        const uploadedFilesList = req.files.map(file => {
+            const fileId = nextFileId++;
+            const fileData = {
+                id: fileId,
+                filename: file.filename,
+                originalName: file.originalname,
+                mimetype: file.mimetype,
+                size: file.size,
+                path: `/uploads/${file.filename}`,
+                uploadedBy: req.user.userId,
+                uploadedAt: new Date().toISOString()
+            };
+            uploadedFiles.set(fileId, fileData);
+            return fileData;
+        });
+        
+        console.log(`✅ [NODE-API] ${uploadedFilesList.length} images uploaded`);
+        
+        res.status(201).json({
+            message: `${uploadedFilesList.length} images uploaded successfully`,
+            files: uploadedFilesList
+        });
+    });
+});
+
+// Upload user profile with avatar (multipart form with mixed fields)
+app.post('/api/v1/uploads/profile', authenticateToken, (req, res) => {
+    console.log('📷 [NODE-API] POST /api/v1/uploads/profile');
+    
+    uploadFields(req, res, (err) => {
+        if (err) {
+            if (err instanceof multer.MulterError) {
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ error: 'File too large', message: 'Maximum file size is 5MB per file' });
+                }
+                return res.status(400).json({ error: 'Upload error', message: err.message });
+            }
+            return res.status(400).json({ error: 'Upload error', message: err.message });
+        }
+        
+        const { name, bio, website } = req.body;
+        const result = {
+            userId: req.user.userId,
+            name: name || null,
+            bio: bio || null,
+            website: website || null,
+            files: {}
+        };
+        
+        // Process avatar
+        if (req.files && req.files.avatar && req.files.avatar[0]) {
+            const avatarFile = req.files.avatar[0];
+            const fileId = nextFileId++;
+            const fileData = {
+                id: fileId,
+                filename: avatarFile.filename,
+                originalName: avatarFile.originalname,
+                mimetype: avatarFile.mimetype,
+                size: avatarFile.size,
+                path: `/uploads/${avatarFile.filename}`,
+                uploadedBy: req.user.userId,
+                uploadedAt: new Date().toISOString()
+            };
+            uploadedFiles.set(fileId, fileData);
+            result.files.avatar = fileData;
+        }
+        
+        // Process cover image
+        if (req.files && req.files.coverImage && req.files.coverImage[0]) {
+            const coverFile = req.files.coverImage[0];
+            const fileId = nextFileId++;
+            const fileData = {
+                id: fileId,
+                filename: coverFile.filename,
+                originalName: coverFile.originalname,
+                mimetype: coverFile.mimetype,
+                size: coverFile.size,
+                path: `/uploads/${coverFile.filename}`,
+                uploadedBy: req.user.userId,
+                uploadedAt: new Date().toISOString()
+            };
+            uploadedFiles.set(fileId, fileData);
+            result.files.coverImage = fileData;
+        }
+        
+        // Process gallery images
+        if (req.files && req.files.gallery && req.files.gallery.length > 0) {
+            result.files.gallery = req.files.gallery.map(file => {
+                const fileId = nextFileId++;
+                const fileData = {
+                    id: fileId,
+                    filename: file.filename,
+                    originalName: file.originalname,
+                    mimetype: file.mimetype,
+                    size: file.size,
+                    path: `/uploads/${file.filename}`,
+                    uploadedBy: req.user.userId,
+                    uploadedAt: new Date().toISOString()
+                };
+                uploadedFiles.set(fileId, fileData);
+                return fileData;
+            });
+        }
+        
+        console.log(`✅ [NODE-API] Profile data uploaded for user ${req.user.userId}`);
+        
+        res.status(201).json({
+            message: 'Profile data uploaded successfully',
+            profile: result
+        });
+    });
+});
+
+// Upload product image (for product management)
+app.post('/api/v1/products/:id/image', authenticateToken, requireRole('admin', 'manager'), validateId, handleValidationErrors, (req, res) => {
+    const productId = parseInt(req.params.id);
+    console.log(`📷 [NODE-API] POST /api/v1/products/${productId}/image`);
+    
+    const product = products.get(productId);
+    if (!product) {
+        return res.status(404).json({ error: 'Product not found' });
+    }
+    
+    uploadSingle(req, res, (err) => {
+        if (err) {
+            if (err instanceof multer.MulterError) {
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ error: 'File too large', message: 'Maximum file size is 5MB' });
+                }
+                return res.status(400).json({ error: 'Upload error', message: err.message });
+            }
+            return res.status(400).json({ error: 'Upload error', message: err.message });
+        }
+        
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded', message: 'Please provide an image file in the "image" field' });
+        }
+        
+        const fileId = nextFileId++;
+        const fileData = {
+            id: fileId,
+            filename: req.file.filename,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype,
+            size: req.file.size,
+            path: `/uploads/${req.file.filename}`,
+            productId: productId,
+            uploadedBy: req.user.userId,
+            uploadedAt: new Date().toISOString()
+        };
+        
+        uploadedFiles.set(fileId, fileData);
+        
+        // Update product with image reference
+        if (!product.images) product.images = [];
+        product.images.push(fileData.path);
+        products.set(productId, product);
+        
+        console.log(`✅ [NODE-API] Product image uploaded for product ${productId}`);
+        
+        res.status(201).json({
+            message: 'Product image uploaded successfully',
+            file: fileData,
+            product: product
+        });
+    });
+});
+
+// Get uploaded file info
+app.get('/api/v1/uploads/:id', authenticateToken, (req, res) => {
+    const fileId = parseInt(req.params.id);
+    console.log(`📷 [NODE-API] GET /api/v1/uploads/${fileId}`);
+    
+    const fileData = uploadedFiles.get(fileId);
+    if (!fileData) {
+        return res.status(404).json({ error: 'File not found' });
+    }
+    
+    // Users can only see their own files unless admin
+    if (req.user.role !== 'admin' && fileData.uploadedBy !== req.user.userId) {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only view your own uploaded files' });
+    }
+    
+    res.json(fileData);
+});
+
+// List user's uploaded files
+app.get('/api/v1/uploads', authenticateToken, (req, res) => {
+    console.log('📷 [NODE-API] GET /api/v1/uploads');
+    const { page = 1, limit = 10 } = req.query;
+    
+    let fileList = Array.from(uploadedFiles.values());
+    
+    // Non-admins only see their own files
+    if (req.user.role !== 'admin') {
+        fileList = fileList.filter(f => f.uploadedBy === req.user.userId);
+    }
+    
+    fileList.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+    
+    const total = fileList.length;
+    const startIndex = (page - 1) * limit;
+    const paginatedFiles = fileList.slice(startIndex, startIndex + parseInt(limit));
+    
+    res.json({
+        data: paginatedFiles,
+        pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / limit) }
+    });
+});
+
+// Delete uploaded file
+app.delete('/api/v1/uploads/:id', authenticateToken, (req, res) => {
+    const fileId = parseInt(req.params.id);
+    console.log(`📷 [NODE-API] DELETE /api/v1/uploads/${fileId}`);
+    
+    const fileData = uploadedFiles.get(fileId);
+    if (!fileData) {
+        return res.status(404).json({ error: 'File not found' });
+    }
+    
+    // Users can only delete their own files unless admin
+    if (req.user.role !== 'admin' && fileData.uploadedBy !== req.user.userId) {
+        return res.status(403).json({ error: 'Forbidden', message: 'You can only delete your own uploaded files' });
+    }
+    
+    // Delete file from filesystem
+    const filePath = path.join(uploadsDir, fileData.filename);
+    if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+    }
+    
+    uploadedFiles.delete(fileId);
+    console.log(`✅ [NODE-API] File deleted: ${fileData.filename}`);
+    
+    res.status(204).send();
+});
+
+// Serve uploaded files statically
+app.use('/uploads', express.static(uploadsDir));
 
 // ============================================
 // ANALYTICS / STATS ROUTES (Admin/Manager only)
